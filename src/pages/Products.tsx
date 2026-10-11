@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { api, ApiError } from "@/lib/api";
 import DashboardLayout from "@/components/DashboardLayout";
 import { useUserRole } from "@/hooks/useUserRole";
 import { Button } from "@/components/ui/button";
@@ -18,7 +18,7 @@ const Products = () => {
   const [editingProduct, setEditingProduct] = useState<any>(null);
   const [imageFile, setImageFile] = useState<File | null>(null);
   const { isAdmin } = useUserRole();
-  
+
   const [formData, setFormData] = useState({
     name: "",
     description: "",
@@ -31,13 +31,8 @@ const Products = () => {
 
   const fetchProducts = async () => {
     try {
-      const { data, error } = await supabase
-        .from("products")
-        .select("*")
-        .order("created_at", { ascending: false });
-
-      if (error) throw error;
-      setProducts(data || []);
+      const data = await api.products.list();
+      setProducts(data.sort((a: any, b: any) => (a.created_at < b.created_at ? 1 : -1)));
     } catch (error) {
       console.error("Error fetching products:", error);
       toast.error("Mahsulotlarni yuklashda xato");
@@ -48,21 +43,8 @@ const Products = () => {
 
   const uploadImage = async (file: File): Promise<string | null> => {
     try {
-      const fileExt = file.name.split('.').pop();
-      const fileName = `${Math.random()}.${fileExt}`;
-      const filePath = `${fileName}`;
-
-      const { error: uploadError } = await supabase.storage
-        .from('product-images')
-        .upload(filePath, file);
-
-      if (uploadError) throw uploadError;
-
-      const { data } = supabase.storage
-        .from('product-images')
-        .getPublicUrl(filePath);
-
-      return data.publicUrl;
+      const { url } = await api.uploads.upload(file);
+      return url;
     } catch (error) {
       console.error("Error uploading image:", error);
       toast.error("Rasm yuklashda xato");
@@ -72,9 +54,9 @@ const Products = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     try {
-      let imageUrl = editingProduct?.image_url || null;
+      let imageUrl: string | null = editingProduct?.image_url || null;
 
       if (imageFile) {
         imageUrl = await uploadImage(imageFile);
@@ -89,19 +71,10 @@ const Products = () => {
       };
 
       if (editingProduct) {
-        const { error } = await supabase
-          .from("products")
-          .update(productData)
-          .eq("id", editingProduct.id);
-
-        if (error) throw error;
+        await api.products.update(editingProduct.id, productData);
         toast.success("Mahsulot yangilandi!");
       } else {
-        const { error } = await supabase
-          .from("products")
-          .insert(productData);
-
-        if (error) throw error;
+        await api.products.create(productData);
         toast.success("Mahsulot qo'shildi!");
       }
 
@@ -110,8 +83,8 @@ const Products = () => {
       setFormData({ name: "", description: "", price: "" });
       setImageFile(null);
       fetchProducts();
-    } catch (error: any) {
-      toast.error(error.message);
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : "Xatolik yuz berdi");
     }
   };
 
@@ -129,16 +102,11 @@ const Products = () => {
     if (!confirm("Mahsulotni o'chirishni xohlaysizmi?")) return;
 
     try {
-      const { error } = await supabase
-        .from("products")
-        .delete()
-        .eq("id", productId);
-
-      if (error) throw error;
+      await api.products.remove(productId);
       toast.success("Mahsulot o'chirildi!");
       fetchProducts();
-    } catch (error: any) {
-      toast.error(error.message);
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : "Xatolik yuz berdi");
     }
   };
 
@@ -173,7 +141,7 @@ const Products = () => {
             <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
               <DialogTrigger asChild>
                 <Button
-                    size="lg" 
+                    size="lg"
                     className="rounded-full bg-primary hover:bg-primary/90 text-primary-foreground shadow-lg hover:shadow-xl transition-all px-6 py-6 text-base font-semibold"
                     onClick={closeDialog}
                   >

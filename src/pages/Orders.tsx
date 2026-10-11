@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { api, ApiError } from "@/lib/api";
+import { useAuth } from "@/hooks/useAuth";
 import DashboardLayout from "@/components/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -32,6 +33,7 @@ const Orders = () => {
   const [products, setProducts] = useState<any[]>([]);
   const [availableDistricts, setAvailableDistricts] = useState<string[]>([]);
   const { isAdmin } = useUserRoles();
+  const { user } = useAuth();
   
   const [items, setItems] = useState<Array<{
     product_id: string;
@@ -51,9 +53,11 @@ const Orders = () => {
   });
 
   useEffect(() => {
-    fetchOrders();
-    fetchProducts();
-  }, []);
+    if (user) {
+      fetchOrders();
+      fetchProducts();
+    }
+  }, [user]);
 
   useEffect(() => {
     filterOrders();
@@ -70,13 +74,8 @@ const Orders = () => {
 
   const fetchProducts = async () => {
     try {
-      const { data, error } = await supabase
-        .from("products")
-        .select("*")
-        .order("name");
-      
-      if (error) throw error;
-      setProducts(data || []);
+      const data = await api.products.list();
+      setProducts(data.sort((a: any, b: any) => a.name.localeCompare(b.name)));
     } catch (error) {
       console.error("Error fetching products:", error);
     }
@@ -84,37 +83,19 @@ const Orders = () => {
 
   const fetchOrders = async () => {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
       const sevenDaysAgo = new Date();
       sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+      const sevenDaysAgoStr = format(sevenDaysAgo, "yyyy-MM-dd");
 
-      const { data: ordersData, error: ordersError } = await supabase
-        .from("orders")
-        .select("*")
-        .eq("seller_id", user.id)
-        .gte("order_date", format(sevenDaysAgo, "yyyy-MM-dd"))
-        .order("created_at", { ascending: false });
+      const allOrders = await api.orders.list();
+      const ownRecent = allOrders
+        .filter((o: any) => o.seller_id === user.id && o.order_date >= sevenDaysAgoStr)
+        .sort((a: any, b: any) => (a.created_at < b.created_at ? 1 : -1))
+        .map((o: any) => ({ ...o, items: o.order_items || [] }));
 
-      if (ordersError) throw ordersError;
-
-      // Fetch order items for each order
-      const ordersWithItems = await Promise.all(
-        (ordersData || []).map(async (order) => {
-          const { data: itemsData } = await supabase
-            .from("order_items")
-            .select("*")
-            .eq("order_id", order.id);
-
-          return {
-            ...order,
-            items: itemsData || [],
-          };
-        })
-      );
-
-      setOrders(ordersWithItems);
+      setOrders(ownRecent);
     } catch (error) {
       console.error("Error fetching orders:", error);
       toast.error("Zakazlarni yuklashda xato");
@@ -125,24 +106,19 @@ const Orders = () => {
 
   const updateOrderStatus = async (orderId: string, newStatus: string) => {
     try {
-      const { error } = await supabase
-        .from("orders")
-        .update({ status: newStatus })
-        .eq("id", orderId);
-
-      if (error) throw error;
+      await api.orders.update(orderId, { status: newStatus });
 
       // Sync status change to Google Sheets
       try {
-        await supabase.functions.invoke('trigger-sheets-sync');
+        await api.integrations.triggerSheetsSync();
       } catch (sheetsError) {
         console.error('Google Sheets sync error:', sheetsError);
       }
 
       toast.success("Zakaz statusi yangilandi!");
       fetchOrders();
-    } catch (error: any) {
-      toast.error(error.message);
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : "Xatolik yuz berdi");
     }
   };
 
@@ -234,24 +210,19 @@ const Orders = () => {
 
   const handleQuickStatusUpdate = async (orderId: string, newStatus: string) => {
     try {
-      const { error } = await supabase
-        .from("orders")
-        .update({ status: newStatus })
-        .eq("id", orderId);
-
-      if (error) throw error;
+      await api.orders.update(orderId, { status: newStatus });
 
       // Sync status change to Google Sheets
       try {
-        await supabase.functions.invoke('trigger-sheets-sync');
+        await api.integrations.triggerSheetsSync();
       } catch (sheetsError) {
         console.error('Google Sheets sync error:', sheetsError);
       }
 
       toast.success("Status yangilandi!");
       fetchOrders();
-    } catch (error: any) {
-      toast.error("Xatolik: " + error.message);
+    } catch (error) {
+      toast.error("Xatolik: " + (error instanceof ApiError ? error.message : ""));
     }
   };
 
@@ -276,114 +247,60 @@ const Orders = () => {
   const submitOrder = async () => {
     setIsSubmitting(true);
     setConfirmDialogOpen(false);
-    
+
     try {
-      const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
-
-      // Get user's company_id and full_name
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("company_id, full_name")
-        .eq("id", user.id)
-        .single();
-
-      if (!profile?.company_id) {
-        toast.error("Kompaniya topilmadi!");
-        return;
-      }
 
       const totalAmount = items.reduce((sum, item) => {
         return sum + (parseInt(item.quantity) * parseFloat(item.price));
       }, 0);
 
       const advancePayment = parseFloat(formData.advance_payment) || 0;
+      const orderItems = items.map(item => ({
+        product_name: item.product_name,
+        quantity: parseInt(item.quantity),
+        price: parseFloat(item.price),
+      }));
 
       if (editingOrder) {
-        // Update existing order
-        const { error: orderError } = await supabase
-          .from("orders")
-          .update({
-            customer_name: formData.customer_name,
-            customer_phone: formData.customer_phone,
-            customer_phone2: formData.customer_phone2,
-            total_amount: totalAmount,
-            advance_payment: advancePayment,
-            region: formData.region,
-            district: formData.district,
-            notes: formData.notes,
-          })
-          .eq("id", editingOrder.id);
-
-        if (orderError) throw orderError;
-
-        // Delete old items
-        await supabase
-          .from("order_items")
-          .delete()
-          .eq("order_id", editingOrder.id);
-
-        // Create new items
-        const orderItems = items.map(item => ({
-          order_id: editingOrder.id,
-          product_name: item.product_name,
-          quantity: parseInt(item.quantity),
-          price: parseFloat(item.price),
-        }));
-
-        const { error: itemsError } = await supabase
-          .from("order_items")
-          .insert(orderItems);
-
-        if (itemsError) throw itemsError;
+        await api.orders.update(editingOrder.id, {
+          customer_name: formData.customer_name,
+          customer_phone: formData.customer_phone,
+          customer_phone2: formData.customer_phone2,
+          total_amount: totalAmount,
+          advance_payment: advancePayment,
+          region: formData.region,
+          district: formData.district,
+          notes: formData.notes,
+          items: orderItems,
+        });
 
         toast.success("Zakaz yangilandi!");
       } else {
-        // Create single order with company_id
-        const { data: orderData, error: orderError } = await supabase
-          .from("orders")
-          .insert({
-            seller_id: user.id,
-            company_id: profile.company_id,
-            customer_name: formData.customer_name,
-            customer_phone: formData.customer_phone,
-            customer_phone2: formData.customer_phone2,
-            total_amount: totalAmount,
-            advance_payment: advancePayment,
-            status: "pending",
-            region: formData.region,
-            district: formData.district,
-            notes: formData.notes,
-          })
-          .select()
-          .single();
-
-        if (orderError) throw orderError;
-
-        // Create order items
-        const orderItems = items.map(item => ({
-          order_id: orderData.id,
-          product_name: item.product_name,
-          quantity: parseInt(item.quantity),
-          price: parseFloat(item.price),
-        }));
-
-        const { error: itemsError } = await supabase
-          .from("order_items")
-          .insert(orderItems);
-
-        if (itemsError) throw itemsError;
+        await api.orders.create({
+          seller_id: user.id,
+          customer_name: formData.customer_name,
+          customer_phone: formData.customer_phone,
+          customer_phone2: formData.customer_phone2,
+          total_amount: totalAmount,
+          advance_payment: advancePayment,
+          status: "pending",
+          region: formData.region,
+          district: formData.district,
+          notes: formData.notes,
+          items: orderItems,
+        });
 
         // Sync to Google Sheets via Apps Script trigger
         try {
-          await supabase.functions.invoke('trigger-sheets-sync');
+          await api.integrations.triggerSheetsSync();
         } catch (sheetsError) {
           console.error('Google Sheets sync error:', sheetsError);
         }
 
         toast.success("Zakaz qo'shildi!");
       }
-      
+
       setDialogOpen(false);
       setEditingOrder(null);
       setFormData({
@@ -398,8 +315,8 @@ const Orders = () => {
       setAvailableDistricts([]);
       setItems([]);
       fetchOrders();
-    } catch (error: any) {
-      toast.error(error.message);
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : "Xatolik yuz berdi");
     } finally {
       setIsSubmitting(false);
     }

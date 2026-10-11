@@ -1,479 +1,373 @@
-import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { useEffect, useMemo, useState } from "react";
+import { api } from "@/lib/api";
+import { useAuth } from "@/hooks/useAuth";
 import DashboardLayout from "@/components/DashboardLayout";
+import DashboardStatCard from "@/components/dashboard/DashboardStatCard";
+import DonutCard, { DonutSlice } from "@/components/dashboard/DonutCard";
+import StageBreakdownCard from "@/components/statistics/StageBreakdownCard";
+import SellerRankingTable from "@/components/statistics/SellerRankingTable";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell, LabelList, PieChart, Pie } from "recharts";
+import {
+  ComposedChart,
+  Bar,
+  Line,
+  BarChart as RBarChart,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Legend,
+  Cell,
+} from "recharts";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Label } from "@/components/ui/label";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useUserRoles } from "@/hooks/useUserRoles";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { format, subDays, subMonths, subYears, startOfDay, endOfDay } from "date-fns";
-import StatsCard from "@/components/StatsCard";
-import EmployeeStatsCard from "@/components/EmployeeStatsCard";
-import { ShoppingCart, TrendingUp, DollarSign, Target, CalendarIcon, Search, Globe, FileText } from "lucide-react";
+import { format, parseISO, startOfWeek, startOfMonth, startOfYear, subDays } from "date-fns";
+import {
+  ShoppingCart,
+  TrendingUp,
+  DollarSign,
+  Users2,
+  SlidersHorizontal,
+  Calendar as CalendarIcon,
+  PieChart as PieChartIcon,
+  BarChart3,
+  Boxes,
+  Download,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
-import { cn } from "@/lib/utils";
+import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import * as XLSX from "xlsx";
 
-interface OrderStatusData {
-  seller_id: string;
-  seller_name: string;
-  pending: number;
-  delivered: number;
-  cancelled: number;
-  total: number;
-  pendingPercent: number;
-  deliveredPercent: number;
-  cancelledPercent: number;
-  totalSales: number;
-  averageCheck: number;
-  totalLeads: number;
-  conversionRate: number;
-  orders?: any[];
-  leadStages?: { [stageId: string]: { count: number; percent: number; stageName: string; leads: any[] } };
-}
+type StatsPeriod = "week" | "month" | "year" | "all";
+const PERIOD_LABELS: Record<StatsPeriod, string> = {
+  week: "Joriy hafta",
+  month: "Joriy oy",
+  year: "Joriy yil",
+  all: "Barcha davr",
+};
+type Granularity = "daily" | "weekly" | "monthly";
 
-interface SourceStats {
-  source: string;
-  leads: number;
-  sales: number;
-  leadsPercent: number;
-  salesPercent: number;
-}
+const DAY_MS = 24 * 60 * 60 * 1000;
+const ORDER_STATUS_LABELS: Record<string, string> = { pending: "Jarayonda", delivered: "Yetkazildi", cancelled: "Bekor qilindi" };
+const CHART_PALETTE = ["#3b82f6", "#22c55e", "#8b5cf6", "#f59e0b", "#ef4444", "#06b6d4", "#ec4899", "#64748b"];
+
+const pctChange = (current: number, previous: number): number | null => {
+  if (previous === 0) return null;
+  return Math.round(((current - previous) / previous) * 100);
+};
+
+const getPeriodRange = (period: StatsPeriod) => {
+  const now = new Date();
+  switch (period) {
+    case "week":
+      return { start: startOfWeek(now, { weekStartsOn: 1 }), end: now };
+    case "year":
+      return { start: startOfYear(now), end: now };
+    case "all":
+      return { start: new Date(2015, 0, 1), end: now };
+    default:
+      return { start: startOfMonth(now), end: now };
+  }
+};
 
 const Statistics = () => {
+  const { user } = useAuth();
+  const { isAdmin, isRop, isAdminOrRop } = useUserRoles();
+
+  const [orders, setOrders] = useState<any[]>([]);
+  const [leads, setLeads] = useState<any[]>([]);
   const [sellers, setSellers] = useState<any[]>([]);
-  const [selectedSeller, setSelectedSeller] = useState<string>("all");
-  const [statusData, setStatusData] = useState<OrderStatusData[]>([]);
-  const [chartData, setChartData] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [currentUserId, setCurrentUserId] = useState<string>("");
-  const { isAdmin, isRop, isSotuvchi } = useUserRoles();
-  
-  // Date range states
-  const [startDate, setStartDate] = useState<Date | undefined>(subMonths(new Date(), 1));
-  const [endDate, setEndDate] = useState<Date | undefined>(new Date());
-  const [searchTerm, setSearchTerm] = useState("");
-  
-  // Summary statistics
-  const [totalOrders, setTotalOrders] = useState(0);
-  const [totalLeads, setTotalLeads] = useState(0);
-  const [totalSales, setTotalSales] = useState(0);
-  const [averageCheck, setAverageCheck] = useState(0);
-  const [conversionRate, setConversionRate] = useState(0);
   const [stages, setStages] = useState<any[]>([]);
-  
-  // Source stats
-  const [sourceStats, setSourceStats] = useState<SourceStats[]>([]);
-  
-  // Orders dialog state
+  const [products, setProducts] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const [period, setPeriod] = useState<StatsPeriod>("month");
+  const [customStart, setCustomStart] = useState<Date | undefined>(undefined);
+  const [customEnd, setCustomEnd] = useState<Date | undefined>(undefined);
+  const [filterSeller, setFilterSeller] = useState("all");
+  const [filterSource, setFilterSource] = useState("all");
+  const [filterStage, setFilterStage] = useState("all");
+  const [searchTerm, setSearchTerm] = useState("");
+  const [granularity, setGranularity] = useState<Granularity>("daily");
+
   const [ordersDialogOpen, setOrdersDialogOpen] = useState(false);
   const [selectedOrders, setSelectedOrders] = useState<any[]>([]);
   const [dialogTitle, setDialogTitle] = useState("");
-  
-  // Leads by stage dialog
   const [leadsDialogOpen, setLeadsDialogOpen] = useState(false);
   const [selectedStageLeads, setSelectedStageLeads] = useState<any[]>([]);
   const [leadsDialogTitle, setLeadsDialogTitle] = useState("");
 
   useEffect(() => {
-    fetchCurrentUser();
-    fetchStages();
-    // Fetch sellers for everyone (for rankings visibility)
-    fetchSellers();
+    fetchAll();
   }, []);
 
-  const fetchStages = async () => {
-    try {
-      const { data, error } = await supabase
-        .from("stages")
-        .select("*")
-        .order("display_order");
-      
-      if (error) throw error;
-      setStages(data || []);
-    } catch (error) {
-      console.error("Error fetching stages:", error);
-    }
-  };
-
-  const fetchCurrentUser = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (user) {
-      setCurrentUserId(user.id);
-    }
-  };
-
-  useEffect(() => {
-    fetchStatistics();
-  }, [selectedSeller, currentUserId, startDate, endDate]);
-
-  const setQuickFilter = (days: number | 'year') => {
-    const end = new Date();
-    let start: Date;
-    
-    if (days === 'year') {
-      start = subYears(end, 1);
-    } else {
-      start = subDays(end, days);
-    }
-    
-    setStartDate(start);
-    setEndDate(end);
-  };
-
-  const fetchSellers = async () => {
-    try {
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("id, full_name")
-        .eq("role", "seller")
-        .order("full_name");
-
-      if (error) throw error;
-      setSellers(data || []);
-    } catch (error: any) {
-      toast.error("Sotuvchilarni yuklashda xatolik: " + error.message);
-    }
-  };
-
-  const fetchStatistics = async () => {
-    if (!currentUserId) return;
-    
+  const fetchAll = async () => {
     try {
       setLoading(true);
-      let ordersQuery = supabase
-        .from("orders")
-        .select(`
-          *,
-          profiles!orders_seller_id_fkey(full_name)
-        `);
-
-      let leadsQuery = supabase.from("leads").select("id", { count: "exact", head: true });
-
-      // Apply date range filter
-      if (startDate) {
-        const startISO = startOfDay(startDate).toISOString();
-        ordersQuery = ordersQuery.gte("created_at", startISO);
-        leadsQuery = leadsQuery.gte("created_at", startISO);
-      }
-      
-      if (endDate) {
-        const endISO = endOfDay(endDate).toISOString();
-        ordersQuery = ordersQuery.lte("created_at", endISO);
-        leadsQuery = leadsQuery.lte("created_at", endISO);
-      }
-
-      // Filter by selected seller only for summary stats
-      // Rankings will show all sellers for everyone
-      if (selectedSeller !== "all") {
-        ordersQuery = ordersQuery.eq("seller_id", selectedSeller);
-        leadsQuery = leadsQuery.eq("seller_id", selectedSeller);
-      } else if (isSotuvchi && currentUserId) {
-        // For sotuvchi, filter summary stats to their own but still show all for ranking
-        ordersQuery = ordersQuery.eq("seller_id", currentUserId);
-        leadsQuery = leadsQuery.eq("seller_id", currentUserId);
-      }
-
-      const [{ data: orders, error: ordersError }, { count: leadsCount, error: leadsError }] = await Promise.all([
-        ordersQuery,
-        leadsQuery
+      const [ordersData, leadsData, profilesData, stagesData, productsData] = await Promise.all([
+        api.orders.list(),
+        api.leads.list(),
+        api.profiles.list(),
+        api.stages.list(),
+        api.products.list(),
       ]);
-
-      if (ordersError) throw ordersError;
-      if (leadsError) throw leadsError;
-
-      // Calculate summary statistics
-      const totalOrdersCount = orders?.length || 0;
-      const totalLeadsCount = leadsCount || 0;
-      const totalSalesAmount = orders?.reduce((sum, order) => sum + Number(order.total_amount), 0) || 0;
-      const avgCheck = totalOrdersCount > 0 ? totalSalesAmount / totalOrdersCount : 0;
-      
-      // Sifatsiz stage ID - exclude from conversion calculation
-      const SIFATSIZ_STAGE_ID = "adc7a8bf-d7c2-4dc5-b89b-6d1da828ce84";
-
-      setTotalOrders(totalOrdersCount);
-      setTotalLeads(totalLeadsCount);
-      setTotalSales(totalSalesAmount);
-      setAverageCheck(avgCheck);
-
-      // Get leads data with stages and source for conversion and stage distribution calculation
-      // leadsMap counts leads EXCLUDING Sifatsiz for conversion calculation
-      let leadsMap = new Map<string, number>();
-      // leadsStageMap includes ALL leads for stage distribution display
-      let leadsStageMap = new Map<string, Map<string, any[]>>();
-      
-      // Fetch leads for all sellers to show rankings for everyone
-      let leadsQueryBuilder = supabase.from("leads").select("seller_id, id, stage, customer_name, customer_phone, source");
-      
-      // Don't filter leads by seller - we need all for rankings
-      if (selectedSeller !== "all") {
-        leadsQueryBuilder = leadsQueryBuilder.eq("seller_id", selectedSeller);
-      }
-
-      // Apply date range filter to leads
-      if (startDate) {
-        leadsQueryBuilder = leadsQueryBuilder.gte("created_at", startOfDay(startDate).toISOString());
-      }
-      if (endDate) {
-        leadsQueryBuilder = leadsQueryBuilder.lte("created_at", endOfDay(endDate).toISOString());
-      }
-      
-      const { data: leadsData } = await leadsQueryBuilder;
-      
-      // Calculate source statistics
-      const sourceLeadsMap = new Map<string, number>();
-      const sourceSalesMap = new Map<string, number>();
-      const totalLeadsForSource = leadsData?.length || 0;
-      
-      // Count leads excluding Sifatsiz for conversion calculation
-      let totalLeadsExcludingSifatsiz = 0;
-      
-      leadsData?.forEach((lead) => {
-        // Only count leads that are NOT in Sifatsiz stage for conversion calculation
-        if (lead.stage !== SIFATSIZ_STAGE_ID) {
-          const count = leadsMap.get(lead.seller_id) || 0;
-          leadsMap.set(lead.seller_id, count + 1);
-          totalLeadsExcludingSifatsiz++;
-        }
-        
-        // Track leads by source (all leads, including Sifatsiz for source stats)
-        const source = lead.source || 'Noma\'lum';
-        sourceLeadsMap.set(source, (sourceLeadsMap.get(source) || 0) + 1);
-        
-        // Track leads by stage for each seller
-        if (!leadsStageMap.has(lead.seller_id)) {
-          leadsStageMap.set(lead.seller_id, new Map());
-        }
-        const sellerStages = leadsStageMap.get(lead.seller_id)!;
-        if (!sellerStages.has(lead.stage)) {
-          sellerStages.set(lead.stage, []);
-        }
-        sellerStages.get(lead.stage)!.push(lead);
-        
-        // Count sales by source (if stage is "sotildi" or similar completed stage)
-        const soldStage = stages.find(s => s.name.toLowerCase().includes('sotildi'));
-        if (soldStage && lead.stage === soldStage.id) {
-          sourceSalesMap.set(source, (sourceSalesMap.get(source) || 0) + 1);
-        }
-      });
-      
-      // Calculate total sales from leads (conversion count)
-      const totalSalesFromLeads = Array.from(sourceSalesMap.values()).reduce((a, b) => a + b, 0);
-      
-      // Build source stats array
-      const sourceStatsArray: SourceStats[] = [];
-      ['Sayt', 'Forma'].forEach(source => {
-        const leads = sourceLeadsMap.get(source) || 0;
-        const sales = sourceSalesMap.get(source) || 0;
-        sourceStatsArray.push({
-          source,
-          leads,
-          sales,
-          leadsPercent: totalLeadsForSource > 0 ? Math.round((leads / totalLeadsForSource) * 100) : 0,
-          salesPercent: totalSalesFromLeads > 0 ? Math.round((sales / totalSalesFromLeads) * 100) : 0
-        });
-      });
-      
-      // Add other sources if exist
-      sourceLeadsMap.forEach((leads, source) => {
-        if (source !== 'Sayt' && source !== 'Forma') {
-          const sales = sourceSalesMap.get(source) || 0;
-          sourceStatsArray.push({
-            source,
-            leads,
-            sales,
-            leadsPercent: totalLeadsForSource > 0 ? Math.round((leads / totalLeadsForSource) * 100) : 0,
-            salesPercent: totalSalesFromLeads > 0 ? Math.round((sales / totalSalesFromLeads) * 100) : 0
-          });
-        }
-      });
-      
-      setSourceStats(sourceStatsArray);
-      
-      // Calculate conversion rate excluding Sifatsiz leads
-      const conversion = totalLeadsExcludingSifatsiz > 0 ? (totalOrdersCount / totalLeadsExcludingSifatsiz) * 100 : 0;
-      setConversionRate(conversion);
-
-      // Group by seller
-      const sellerMap = new Map<string, any>();
-      
-      orders?.forEach((order) => {
-        const sellerId = order.seller_id;
-        const sellerName = order.profiles?.full_name || "Noma'lum";
-        
-        if (!sellerMap.has(sellerId)) {
-          sellerMap.set(sellerId, {
-            seller_id: sellerId,
-            seller_name: sellerName,
-            pending: 0,
-            delivered: 0,
-            cancelled: 0,
-            total: 0,
-            totalSales: 0,
-            orders: []
-          });
-        }
-
-        const seller = sellerMap.get(sellerId);
-        seller.total++;
-        seller.totalSales += Number(order.total_amount);
-        seller.orders.push(order);
-        
-        if (order.status === "pending") {
-          seller.pending++;
-        } else if (order.status === "delivered") {
-          seller.delivered++;
-        } else if (order.status === "cancelled") {
-          seller.cancelled++;
-        }
-      });
-
-      let statsArray: OrderStatusData[] = Array.from(sellerMap.values()).map((seller) => {
-        const sellerLeads = leadsMap.get(seller.seller_id) || 0;
-        const conversionRate = sellerLeads > 0 ? (seller.total / sellerLeads) * 100 : 0;
-        
-        // Calculate lead stage distribution
-        const sellerStageLeads = leadsStageMap.get(seller.seller_id);
-        const leadStages: { [stageId: string]: { count: number; percent: number; stageName: string; leads: any[] } } = {};
-        
-        if (sellerStageLeads && sellerLeads > 0) {
-          stages.forEach((stage) => {
-            const stageLeadsList = sellerStageLeads.get(stage.id) || [];
-            leadStages[stage.id] = {
-              count: stageLeadsList.length,
-              percent: Math.round((stageLeadsList.length / sellerLeads) * 100),
-              stageName: stage.name,
-              leads: stageLeadsList
-            };
-          });
-        }
-        
-        return {
-          ...seller,
-          pendingPercent: seller.total > 0 ? Math.round((seller.pending / seller.total) * 100) : 0,
-          deliveredPercent: seller.total > 0 ? Math.round((seller.delivered / seller.total) * 100) : 0,
-          cancelledPercent: seller.total > 0 ? Math.round((seller.cancelled / seller.total) * 100) : 0,
-          averageCheck: seller.total > 0 ? seller.totalSales / seller.total : 0,
-          totalLeads: sellerLeads,
-          conversionRate: conversionRate,
-          leadStages: leadStages
-        };
-      });
-
-      // Apply search filter
-      if (searchTerm) {
-        const term = searchTerm.toLowerCase();
-        statsArray = statsArray.filter(seller => 
-          seller.seller_name.toLowerCase().includes(term) ||
-          seller.orders.some((order: any) => 
-            order.customer_name?.toLowerCase().includes(term) ||
-            order.customer_phone?.toLowerCase().includes(term) ||
-            order.region?.toLowerCase().includes(term) ||
-            order.district?.toLowerCase().includes(term)
-          )
-        );
-      }
-      
-      setStatusData(statsArray);
-
-      // Prepare chart data with all 3 bars for each seller
-      const chartData = statsArray.flatMap((seller) => [
-        {
-          name: seller.seller_name,
-          status: "Kutilmoqda",
-          value: seller.pending,
-          percent: seller.pendingPercent,
-          sellerId: seller.seller_id,
-          statusKey: "pending",
-          fill: "#3b82f6"
-        },
-        {
-          name: seller.seller_name,
-          status: "Yetkazildi",
-          value: seller.delivered,
-          percent: seller.deliveredPercent,
-          sellerId: seller.seller_id,
-          statusKey: "delivered",
-          fill: "#22c55e"
-        },
-        {
-          name: seller.seller_name,
-          status: "Bekor qilindi",
-          value: seller.cancelled,
-          percent: seller.cancelledPercent,
-          sellerId: seller.seller_id,
-          statusKey: "cancelled",
-          fill: "#ef4444"
-        }
-      ]);
-
-      setChartData(chartData);
-    } catch (error: any) {
-      toast.error("Statistikani yuklashda xatolik: " + error.message);
+      setOrders(ordersData);
+      setLeads(leadsData);
+      setSellers(profilesData.filter((p: any) => p.role === "seller").sort((a: any, b: any) => a.full_name.localeCompare(b.full_name)));
+      setStages(stagesData.sort((a: any, b: any) => a.display_order - b.display_order));
+      setProducts(productsData);
+    } catch (error) {
+      console.error(error);
+      toast.error("Statistikani yuklashda xatolik");
     } finally {
       setLoading(false);
     }
   };
 
-  const handleViewOrders = async (sellerId: string, sellerName: string, status: string) => {
-    try {
-      const { data: orders, error } = await supabase
-        .from("orders")
-        .select(`
-          *,
-          order_items(*)
-        `)
-        .eq("seller_id", sellerId)
-        .eq("status", status)
-        .order("created_at", { ascending: false });
+  const { start: periodStart, end: periodEnd } = useMemo(() => {
+    if (customStart || customEnd) return { start: customStart ?? new Date(2015, 0, 1), end: customEnd ?? new Date() };
+    return getPeriodRange(period);
+  }, [period, customStart, customEnd]);
 
-      if (error) throw error;
+  const { start: prevStart, end: prevEnd } = useMemo(() => {
+    const spanMs = Math.max(periodEnd.getTime() - periodStart.getTime(), DAY_MS);
+    const prevEndDate = new Date(periodStart.getTime() - 1);
+    return { start: new Date(prevEndDate.getTime() - spanMs), end: prevEndDate };
+  }, [periodStart, periodEnd]);
 
-      const statusLabels: Record<string, string> = {
-        pending: "Kutilmoqda",
-        delivered: "Yetkazildi",
-        cancelled: "Bekor qilindi"
-      };
+  const sellerNameById = useMemo(() => new Map(sellers.map((s) => [s.id, s.full_name])), [sellers]);
+  const stageById = useMemo(() => new Map(stages.map((s) => [s.id, s])), [stages]);
 
-      setSelectedOrders(orders || []);
-      setDialogTitle(`${sellerName} - ${statusLabels[status]} zakazlar`);
-      setOrdersDialogOpen(true);
-    } catch (error: any) {
-      toast.error("Zakazlarni yuklashda xatolik: " + error.message);
-    }
+  const ownOrders = useMemo(() => (isAdminOrRop ? orders : orders.filter((o) => o.seller_id === user?.id)), [orders, isAdminOrRop, user?.id]);
+  const ownLeads = useMemo(() => (isAdminOrRop ? leads : leads.filter((l) => l.seller_id === user?.id)), [leads, isAdminOrRop, user?.id]);
+
+  const inRange = (dateStr: string, start: Date, end: Date) => {
+    const d = new Date(dateStr);
+    return d >= start && d <= new Date(end.getTime() + DAY_MS - 1);
   };
 
-  const getStatusBadgeVariant = (status: string) => {
-    switch (status) {
-      case "pending":
-        return "default";
-      case "delivered":
-        return "secondary";
-      case "cancelled":
-        return "destructive";
-      default:
-        return "outline";
-    }
+  const matchesSearch = (o: any) => {
+    if (!searchTerm) return true;
+    const q = searchTerm.toLowerCase();
+    return (
+      o.customer_name?.toLowerCase().includes(q) ||
+      o.customer_phone?.toLowerCase().includes(q) ||
+      o.region?.toLowerCase().includes(q) ||
+      o.district?.toLowerCase().includes(q)
+    );
   };
 
-  const getStatusLabel = (status: string) => {
-    switch (status) {
-      case "pending":
-        return "Kutilmoqda";
-      case "delivered":
-        return "Yetkazildi";
-      case "cancelled":
-        return "Bekor qilindi";
-      default:
-        return status;
+  const filterByPeriodAndSeller = (rows: any[], start: Date, end: Date, dateField: "order_date" | "created_at") =>
+    rows.filter((r) => inRange(r[dateField], start, end) && (filterSeller === "all" || r.seller_id === filterSeller));
+
+  // Orders are filtered by order_date (the actual sale date, same field the
+  // revenue chart buckets by) — not created_at (when the DB row happened to be
+  // inserted), which previously let an order's created_at and order_date fall
+  // in different months and inflate/deflate the period totals.
+  const currentOrders = useMemo(
+    () => filterByPeriodAndSeller(ownOrders, periodStart, periodEnd, "order_date").filter(matchesSearch),
+    [ownOrders, periodStart, periodEnd, filterSeller, searchTerm],
+  );
+  const previousOrders = useMemo(
+    () => filterByPeriodAndSeller(ownOrders, prevStart, prevEnd, "order_date"),
+    [ownOrders, prevStart, prevEnd, filterSeller],
+  );
+
+  const currentLeadsBase = useMemo(
+    () => filterByPeriodAndSeller(ownLeads, periodStart, periodEnd, "created_at"),
+    [ownLeads, periodStart, periodEnd, filterSeller],
+  );
+  const previousLeads = useMemo(
+    () => filterByPeriodAndSeller(ownLeads, prevStart, prevEnd, "created_at"),
+    [ownLeads, prevStart, prevEnd, filterSeller],
+  );
+  const currentLeads = useMemo(
+    () =>
+      currentLeadsBase
+        .filter((l) => filterSource === "all" || l.source === filterSource)
+        .filter((l) => filterStage === "all" || l.stage === filterStage)
+        .filter((l) => !searchTerm || l.customer_name?.toLowerCase().includes(searchTerm.toLowerCase()) || l.customer_phone?.toLowerCase().includes(searchTerm.toLowerCase())),
+    [currentLeadsBase, filterSource, filterStage, searchTerm],
+  );
+
+  // --- Summary stats -------------------------------------------------
+  const totalOrders = currentOrders.length;
+  const totalSales = currentOrders.reduce((sum, o) => sum + Number(o.total_amount), 0);
+  const averageCheck = totalOrders > 0 ? totalSales / totalOrders : 0;
+  const prevTotalOrders = previousOrders.length;
+  const prevTotalSales = previousOrders.reduce((sum, o) => sum + Number(o.total_amount), 0);
+  const prevAverageCheck = prevTotalOrders > 0 ? prevTotalSales / prevTotalOrders : 0;
+
+  // Only count real sellers (profiles.role === "seller") as "active" — an
+  // admin/ROP account can technically own orders/leads (e.g. test data, or
+  // leads imported before being reassigned) but isn't part of the sales team.
+  const sellerIdSet = useMemo(() => new Set(sellers.map((s) => s.id)), [sellers]);
+  const activeSellerIds = new Set(
+    [...currentOrders.map((o) => o.seller_id), ...currentLeads.map((l) => l.seller_id)].filter((id) => sellerIdSet.has(id)),
+  );
+  const prevActiveSellerIds = new Set(
+    [...previousOrders.map((o) => o.seller_id), ...previousLeads.map((l) => l.seller_id)].filter((id) => sellerIdSet.has(id)),
+  );
+
+  const ordersTrend = pctChange(totalOrders, prevTotalOrders);
+  const salesTrend = pctChange(totalSales, prevTotalSales);
+  const avgCheckTrend = pctChange(averageCheck, prevAverageCheck);
+  const activeSellersTrend = pctChange(activeSellerIds.size, prevActiveSellerIds.size);
+
+  // --- Revenue dynamics chart -----------------------------------------
+  const dynamicsData = useMemo(() => {
+    const daily: { key: string; label: string; revenue: number; orders: number }[] = [];
+    for (let t = periodStart.getTime(); t <= periodEnd.getTime(); t += DAY_MS) {
+      const d = new Date(t);
+      const dateStr = format(d, "yyyy-MM-dd");
+      const dayOrders = currentOrders.filter((o) => o.order_date === dateStr);
+      daily.push({
+        key: dateStr,
+        label: format(d, "dd MMM"),
+        revenue: dayOrders.reduce((sum, o) => sum + Number(o.total_amount), 0),
+        orders: dayOrders.length,
+      });
     }
+    if (granularity === "daily" || daily.length === 0) return daily;
+
+    const groupKey = (dateStr: string) =>
+      granularity === "weekly" ? format(startOfWeek(parseISO(dateStr), { weekStartsOn: 1 }), "yyyy-MM-dd") : dateStr.slice(0, 7);
+    const map = new Map<string, { label: string; revenue: number; orders: number }>();
+    daily.forEach((d) => {
+      const key = groupKey(d.key);
+      const label = granularity === "weekly" ? `${format(parseISO(key), "dd MMM")} haftasi` : format(parseISO(`${key}-01`), "MMM yyyy");
+      const existing = map.get(key) ?? { label, revenue: 0, orders: 0 };
+      existing.revenue += d.revenue;
+      existing.orders += d.orders;
+      map.set(key, existing);
+    });
+    return Array.from(map.entries())
+      .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+      .map(([, v]) => v);
+  }, [currentOrders, periodStart, periodEnd, granularity]);
+
+  // --- Order status donut ---------------------------------------------
+  const orderStatusSlices: DonutSlice[] = useMemo(
+    () => [
+      { label: "Jarayonda", value: currentOrders.filter((o) => o.status === "pending").length, color: "#3b82f6" },
+      { label: "Yetkazildi", value: currentOrders.filter((o) => o.status === "delivered").length, color: "#22c55e" },
+      { label: "Bekor qilindi", value: currentOrders.filter((o) => o.status === "cancelled").length, color: "#ef4444" },
+    ],
+    [currentOrders],
+  );
+
+  // --- Lead sources bar chart ------------------------------------------
+  const sourceChartData = useMemo(() => {
+    const counts = new Map<string, number>();
+    currentLeads.forEach((l) => {
+      const key = l.source || "Noma'lum";
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    });
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([source, count], i) => ({ source: source.toUpperCase(), count, fill: CHART_PALETTE[i % CHART_PALETTE.length] }));
+  }, [currentLeads]);
+
+  // --- Stage breakdown ---------------------------------------------------
+  const stageBreakdown = useMemo(() => {
+    const totalForStages = currentLeadsBase.length;
+    return stages.map((s) => {
+      const count = currentLeadsBase.filter((l) => l.stage === s.id).length;
+      return { id: s.id, name: s.name, color: s.color, count, percent: totalForStages > 0 ? Math.round((count / totalForStages) * 100) : 0 };
+    });
+  }, [stages, currentLeadsBase]);
+
+  // --- Order type donut (from product category) -------------------------
+  const productCategoryByName = useMemo(() => new Map(products.map((p: any) => [p.name?.toLowerCase(), p.category || "Boshqalar"])), [products]);
+  const orderTypeSlices: DonutSlice[] = useMemo(() => {
+    const counts = new Map<string, number>();
+    currentOrders.forEach((o) => {
+      (o.order_items || []).forEach((item: any) => {
+        const cat = productCategoryByName.get(item.product_name?.toLowerCase()) || "Boshqalar";
+        counts.set(cat, (counts.get(cat) ?? 0) + 1);
+      });
+    });
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6)
+      .map(([label, value], i) => ({ label, value, color: CHART_PALETTE[i % CHART_PALETTE.length] }));
+  }, [currentOrders, productCategoryByName]);
+
+  // --- Seller ranking ------------------------------------------------
+  const sellerRanking = useMemo(() => {
+    const bySeller = new Map<string, { totalOrders: number; totalSales: number }>();
+    currentOrders.forEach((o) => {
+      const entry = bySeller.get(o.seller_id) ?? { totalOrders: 0, totalSales: 0 };
+      entry.totalOrders += 1;
+      entry.totalSales += Number(o.total_amount);
+      bySeller.set(o.seller_id, entry);
+    });
+    const leadsCountBySeller = new Map<string, number>();
+    currentLeadsBase.forEach((l) => leadsCountBySeller.set(l.seller_id, (leadsCountBySeller.get(l.seller_id) ?? 0) + 1));
+
+    return Array.from(bySeller.entries())
+      .map(([sellerId, v]) => {
+        const sellerLeads = leadsCountBySeller.get(sellerId) ?? 0;
+        return {
+          sellerId,
+          sellerName: sellerNameById.get(sellerId) || "Noma'lum",
+          totalOrders: v.totalOrders,
+          totalSales: v.totalSales,
+          averageCheck: v.totalOrders > 0 ? v.totalSales / v.totalOrders : 0,
+          conversionRate: sellerLeads > 0 ? (v.totalOrders / sellerLeads) * 100 : 0,
+        };
+      })
+      .sort((a, b) => b.totalSales - a.totalSales);
+  }, [currentOrders, currentLeadsBase, sellerNameById]);
+
+  const handleViewOrdersByStatus = (status: string) => {
+    const matching = currentOrders.filter((o) => o.status === status).sort((a: any, b: any) => (a.created_at < b.created_at ? 1 : -1));
+    setSelectedOrders(matching);
+    setDialogTitle(`${ORDER_STATUS_LABELS[status] || status} zakazlar`);
+    setOrdersDialogOpen(true);
   };
+
+  const handleViewStageLeads = (stageId: string) => {
+    const matching = currentLeadsBase.filter((l) => l.stage === stageId);
+    const stage = stageById.get(stageId);
+    setSelectedStageLeads(matching);
+    setLeadsDialogTitle(`${stage?.name || "Bosqich"} lidlari`);
+    setLeadsDialogOpen(true);
+  };
+
+  const handleViewSellerOrders = (sellerId: string) => {
+    const matching = currentOrders.filter((o) => o.seller_id === sellerId).sort((a: any, b: any) => (a.created_at < b.created_at ? 1 : -1));
+    setSelectedOrders(matching);
+    setDialogTitle(`${sellerNameById.get(sellerId) || "Sotuvchi"} - zakazlar`);
+    setOrdersDialogOpen(true);
+  };
+
+  const handleExport = () => {
+    const exportData = sellerRanking.map((r, i) => ({
+      "#": i + 1,
+      Sotuvchi: r.sellerName,
+      "Jami zakazlar": r.totalOrders,
+      "Jami savdo": r.totalSales,
+      "O'rtacha chek": Math.round(r.averageCheck),
+      "Konversiya (%)": r.conversionRate.toFixed(1),
+    }));
+    const ws = XLSX.utils.json_to_sheet(exportData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Statistika");
+    XLSX.writeFile(wb, `Statistika_${format(new Date(), "yyyy-MM-dd_HH-mm")}.xlsx`);
+  };
+
+  const availableSources = useMemo(() => Array.from(new Set(leads.map((l) => l.source).filter(Boolean))), [leads]);
+  const hasCustomDate = !!customStart || !!customEnd;
 
   if (loading) {
     return (
@@ -486,379 +380,268 @@ const Statistics = () => {
   return (
     <DashboardLayout>
       <div className="space-y-6">
-        <div className="space-y-4">
-          <div className="flex justify-between items-start">
-            <div>
-              <h2 className="text-3xl font-bold tracking-tight">Statistika</h2>
-              <p className="text-muted-foreground mt-2">
-                {isAdmin || isRop ? "Hodimlar bo'yicha zakaz holati statistikasi" : "Mening zakaz statistikam"}
-              </p>
-            </div>
-            {(isAdmin || isRop) && (
-              <div className="w-[250px]">
-                <Label>Sotuvchi</Label>
-                <Select value={selectedSeller} onValueChange={setSelectedSeller}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Sotuvchini tanlang" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Barcha sotuvchilar</SelectItem>
-                    {sellers.map((seller) => (
-                      <SelectItem key={seller.id} value={seller.id}>
-                        {seller.full_name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-3xl font-bold tracking-tight">Statistika</h2>
+            <p className="mt-2 text-muted-foreground">
+              {isAdmin || isRop ? "Savdo jarayoni, jamoa natijalari va lidlar tahlili" : "Mening zakaz va lidlar statistikam"}
+            </p>
           </div>
-
-          {/* Date Range and Search Filters */}
-          <Card>
-            <CardContent className="pt-6">
-              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                {/* Date Range Pickers */}
-                <div className="space-y-2">
-                  <Label>Boshlanish sanasi</Label>
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <Button
-                        variant="outline"
-                        className={cn(
-                          "w-full justify-start text-left font-normal",
-                          !startDate && "text-muted-foreground"
-                        )}
-                      >
-                        <CalendarIcon className="mr-2 h-4 w-4" />
-                        {startDate ? format(startDate, "dd.MM.yyyy") : "Sanani tanlang"}
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-auto p-0" align="start">
-                      <Calendar
-                        mode="single"
-                        selected={startDate}
-                        onSelect={setStartDate}
-                        initialFocus
-                        className="pointer-events-auto"
-                      />
-                    </PopoverContent>
-                  </Popover>
-                </div>
-
-                <div className="space-y-2">
-                  <Label>Tugash sanasi</Label>
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <Button
-                        variant="outline"
-                        className={cn(
-                          "w-full justify-start text-left font-normal",
-                          !endDate && "text-muted-foreground"
-                        )}
-                      >
-                        <CalendarIcon className="mr-2 h-4 w-4" />
-                        {endDate ? format(endDate, "dd.MM.yyyy") : "Sanani tanlang"}
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-auto p-0" align="start">
-                      <Calendar
-                        mode="single"
-                        selected={endDate}
-                        onSelect={setEndDate}
-                        initialFocus
-                        className="pointer-events-auto"
-                      />
-                    </PopoverContent>
-                  </Popover>
-                </div>
-
-                {/* Search Bar */}
-                <div className="space-y-2">
-                  <Label>Qidiruv</Label>
-                  <div className="relative">
-                    <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-                    <Input
-                      placeholder="Qidirish..."
-                      value={searchTerm}
-                      onChange={(e) => setSearchTerm(e.target.value)}
-                      className="pl-8"
-                    />
-                  </div>
-                </div>
+          <Button variant="outline" className="gap-1.5" onClick={handleExport}>
+            <Download className="h-4 w-4" />
+            Eksport
+          </Button>
         </div>
 
-        {/* Source Statistics - Only for Admin */}
-        {isAdmin && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Globe className="h-5 w-5" />
-                Manba bo'yicha statistika
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-                {sourceStats.map((stat) => (
-                  <Card key={stat.source} className="bg-muted/50">
-                    <CardContent className="pt-6">
-                      <div className="flex items-center gap-3 mb-4">
-                        {stat.source === 'Sayt' ? (
-                          <Globe className="h-8 w-8 text-blue-500" />
-                        ) : stat.source === 'Forma' ? (
-                          <FileText className="h-8 w-8 text-green-500" />
-                        ) : (
-                          <Target className="h-8 w-8 text-gray-500" />
-                        )}
-                        <h3 className="text-lg font-semibold">{stat.source}</h3>
-                      </div>
-                      <div className="space-y-3">
-                        <div className="flex justify-between items-center">
-                          <span className="text-sm text-muted-foreground">Lidlar:</span>
-                          <div className="text-right">
-                            <span className="font-bold text-lg">{stat.leads}</span>
-                            <Badge variant="outline" className="ml-2">{stat.leadsPercent}%</Badge>
-                          </div>
-                        </div>
-                        <div className="flex justify-between items-center">
-                          <span className="text-sm text-muted-foreground">Sotuvlar:</span>
-                          <div className="text-right">
-                            <span className="font-bold text-lg text-green-600">{stat.sales}</span>
-                            <Badge variant="secondary" className="ml-2">{stat.salesPercent}%</Badge>
-                          </div>
-                        </div>
-                        <div className="flex justify-between items-center pt-2 border-t">
-                          <span className="text-sm text-muted-foreground">Konversiya:</span>
-                          <span className="font-bold text-primary">
-                            {stat.leads > 0 ? Math.round((stat.sales / stat.leads) * 100) : 0}%
-                          </span>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
+        <div className="flex flex-wrap items-center gap-2">
+          <Tabs
+            value={hasCustomDate ? "" : period}
+            onValueChange={(v) => {
+              setPeriod(v as StatsPeriod);
+              setCustomStart(undefined);
+              setCustomEnd(undefined);
+            }}
+          >
+            <TabsList className="h-9">
+              {(Object.keys(PERIOD_LABELS) as StatsPeriod[]).map((key) => (
+                <TabsTrigger key={key} value={key} className="px-3 text-sm">
+                  {PERIOD_LABELS[key]}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
+
+          {isAdminOrRop && (
+            <Select value={filterSeller} onValueChange={setFilterSeller}>
+              <SelectTrigger className="h-9 w-[170px]">
+                <SelectValue placeholder="Barcha sotuvchilar" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Barcha sotuvchilar</SelectItem>
+                {sellers.map((s) => (
+                  <SelectItem key={s.id} value={s.id}>
+                    {s.full_name}
+                  </SelectItem>
                 ))}
-                {sourceStats.length === 0 && (
-                  <p className="text-muted-foreground col-span-full text-center py-4">Ma'lumotlar mavjud emas</p>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        )}
+              </SelectContent>
+            </Select>
+          )}
 
-              {/* Quick Filter Buttons */}
-              <div className="flex flex-wrap gap-2 mt-4">
-                <Button 
-                  variant="outline" 
-                  size="sm"
-                  onClick={() => setQuickFilter(7)}
-                >
-                  1 Hafta
-                </Button>
-                <Button 
-                  variant="outline" 
-                  size="sm"
-                  onClick={() => setQuickFilter(10)}
-                >
-                  10 Kun
-                </Button>
-                <Button 
-                  variant="outline" 
-                  size="sm"
-                  onClick={() => setQuickFilter(20)}
-                >
-                  20 Kun
-                </Button>
-                <Button 
-                  variant="outline" 
-                  size="sm"
-                  onClick={() => setQuickFilter(30)}
-                >
-                  1 Oy
-                </Button>
-                <Button 
-                  variant="outline" 
-                  size="sm"
-                  onClick={() => setQuickFilter('year')}
-                >
-                  1 Yil
-                </Button>
+          <Select value={filterSource} onValueChange={setFilterSource}>
+            <SelectTrigger className="h-9 w-[160px]">
+              <SelectValue placeholder="Barcha manbalar" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Barcha manbalar</SelectItem>
+              {availableSources.map((s) => (
+                <SelectItem key={s} value={s}>
+                  {s}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select value={filterStage} onValueChange={setFilterStage}>
+            <SelectTrigger className="h-9 w-[170px]">
+              <SelectValue placeholder="Barcha bosqichlar" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Barcha bosqichlar</SelectItem>
+              {stages.map((s) => (
+                <SelectItem key={s.id} value={s.id}>
+                  {s.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="outline" size="sm" className={`h-9 gap-1.5 ${hasCustomDate ? "border-primary text-primary" : ""}`}>
+                <SlidersHorizontal className="h-3.5 w-3.5" />
+                Filtrlar
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-72 space-y-3 p-4" align="start">
+              <div>
+                <Label className="mb-1.5 block text-xs text-muted-foreground">Boshlanish sanasi</Label>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" size="sm" className="w-full justify-start gap-2 font-normal">
+                      <CalendarIcon className="h-3.5 w-3.5" />
+                      {customStart ? format(customStart, "dd.MM.yyyy") : "Tanlash"}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <Calendar mode="single" selected={customStart} onSelect={setCustomStart} initialFocus />
+                  </PopoverContent>
+                </Popover>
               </div>
-            </CardContent>
-          </Card>
+              <div>
+                <Label className="mb-1.5 block text-xs text-muted-foreground">Tugash sanasi</Label>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" size="sm" className="w-full justify-start gap-2 font-normal">
+                      <CalendarIcon className="h-3.5 w-3.5" />
+                      {customEnd ? format(customEnd, "dd.MM.yyyy") : "Tanlash"}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <Calendar mode="single" selected={customEnd} onSelect={setCustomEnd} initialFocus />
+                  </PopoverContent>
+                </Popover>
+              </div>
+              <div>
+                <Label className="mb-1.5 block text-xs text-muted-foreground">Qidiruv</Label>
+                <Input placeholder="Mijoz, telefon, manzil..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+              </div>
+              {hasCustomDate && (
+                <Button variant="ghost" size="sm" className="w-full" onClick={() => { setCustomStart(undefined); setCustomEnd(undefined); }}>
+                  Tozalash
+                </Button>
+              )}
+            </PopoverContent>
+          </Popover>
         </div>
 
-        {/* Summary Statistics */}
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          <StatsCard
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <DashboardStatCard
+            id="stats-orders"
             title="Jami zakazlar"
-            value={totalOrders}
+            value={String(totalOrders)}
+            description="Oldingi davrga nisbatan"
             icon={ShoppingCart}
-            description="Umumiy buyurtmalar soni"
+            iconClassName="bg-blue-500/10 text-blue-600"
+            trend={ordersTrend !== null ? { value: ordersTrend, isPositive: ordersTrend >= 0 } : undefined}
+            sparkline={dynamicsData.map((d) => d.orders)}
+            sparklineColor="#3b82f6"
           />
-          <StatsCard
-            title="Jami lidlar"
-            value={totalLeads}
-            icon={Target}
-            description="Umumiy lidlar soni"
-          />
-          <StatsCard
+          <DashboardStatCard
+            id="stats-sales"
             title="Jami savdo"
             value={`${totalSales.toLocaleString()} so'm`}
+            description="Oldingi davrga nisbatan"
             icon={DollarSign}
-            description="Umumiy savdo hajmi"
+            iconClassName="bg-emerald-500/10 text-emerald-600"
+            trend={salesTrend !== null ? { value: salesTrend, isPositive: salesTrend >= 0 } : undefined}
+            sparkline={dynamicsData.map((d) => d.revenue)}
+            sparklineColor="#22c55e"
           />
-          <StatsCard
+          <DashboardStatCard
+            id="stats-avg-check"
             title="O'rtacha chek"
             value={`${Math.round(averageCheck).toLocaleString()} so'm`}
+            description="Oldingi davrga nisbatan"
             icon={TrendingUp}
-            description={`Konversiya: ${conversionRate.toFixed(1)}%`}
+            iconClassName="bg-amber-500/10 text-amber-600"
+            trend={avgCheckTrend !== null ? { value: avgCheckTrend, isPositive: avgCheckTrend >= 0 } : undefined}
+            sparkline={[]}
+            sparklineColor="#f59e0b"
+          />
+          <DashboardStatCard
+            id="stats-active-sellers"
+            title="Faol sotuvchilar"
+            value={String(activeSellerIds.size)}
+            description="Jami jamoa bo'yicha"
+            icon={Users2}
+            iconClassName="bg-violet-500/10 text-violet-600"
+            trend={activeSellersTrend !== null ? { value: activeSellersTrend, isPositive: activeSellersTrend >= 0 } : undefined}
+            sparkline={[]}
+            sparklineColor="#8b5cf6"
           />
         </div>
 
-        {/* Sales Rankings - Visible to Everyone */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <TrendingUp className="h-5 w-5" />
-              Sotuvlar bo'yicha reyting
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              {[...statusData]
-                .sort((a, b) => b.totalSales - a.totalSales)
-                .map((seller, index) => (
-                  <div
-                    key={seller.seller_id}
-                    className="flex items-center justify-between p-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm ${
-                        index === 0 ? 'bg-yellow-500 text-yellow-950' :
-                        index === 1 ? 'bg-gray-400 text-gray-950' :
-                        index === 2 ? 'bg-amber-600 text-amber-950' :
-                        'bg-muted-foreground/20 text-muted-foreground'
-                      }`}>
-                        {index + 1}
-                      </div>
-                      <div>
-                        <p className="font-semibold">{seller.seller_name}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {seller.delivered} ta yetkazilgan zakaz
-                        </p>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <p className="font-bold text-lg">{seller.totalSales.toLocaleString()} so'm</p>
-                      <p className="text-xs text-muted-foreground">
-                        Konversiya: {seller.conversionRate.toFixed(1)}%
-                      </p>
-                    </div>
-                  </div>
-                ))}
-              {statusData.length === 0 && (
-                <p className="text-center text-muted-foreground py-4">Ma'lumotlar mavjud emas</p>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Employee Stats Cards */}
-        <div>
-          <h3 className="text-xl font-semibold mb-4">Hodimlar statistikasi</h3>
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {statusData.map((seller) => (
-              <div key={seller.seller_id} className="space-y-4">
-                <EmployeeStatsCard
-                  sellerName={seller.seller_name}
-                  totalOrders={seller.total}
-                  totalLeads={seller.totalLeads}
-                  totalSales={seller.totalSales}
-                  averageCheck={seller.averageCheck}
-                  conversionRate={seller.conversionRate}
-                  pendingOrders={seller.pending}
-                  deliveredOrders={seller.delivered}
-                  cancelledOrders={seller.cancelled}
-                  onViewOrders={(status) => handleViewOrders(seller.seller_id, seller.seller_name, status)}
-                />
-                
-                {/* Lead Stage Distribution */}
-                {seller.leadStages && Object.keys(seller.leadStages).length > 0 && (
-                  <Card>
-                    <CardHeader>
-                      <CardTitle className="text-sm">Lid bosqichlari</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-2">
-                      {Object.entries(seller.leadStages).map(([stageId, stageData]) => (
-                        stageData.count > 0 && (
-                          <div
-                            key={stageId}
-                            className="flex items-center justify-between p-2 hover:bg-muted rounded-lg cursor-pointer transition-colors"
-                            onClick={() => {
-                              setSelectedStageLeads(stageData.leads);
-                              setLeadsDialogTitle(`${seller.seller_name} - ${stageData.stageName} lidlari`);
-                              setLeadsDialogOpen(true);
-                            }}
-                          >
-                            <span className="text-sm">{stageData.stageName}</span>
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs text-muted-foreground">{stageData.count} ta</span>
-                              <Badge variant="outline">{stageData.percent}%</Badge>
-                            </div>
-                          </div>
-                        )
-                      ))}
-                    </CardContent>
-                  </Card>
-                )}
+        <div className="grid gap-4 xl:grid-cols-10">
+          <Card className="xl:col-span-6">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0">
+              <div>
+                <CardTitle className="flex items-center gap-2">
+                  <BarChart3 className="h-5 w-5 text-muted-foreground" />
+                  Savdo dinamikasi
+                </CardTitle>
+                <p className="text-sm text-muted-foreground">Tanlangan davr bo'yicha savdo va zakazlar</p>
               </div>
-            ))}
+              <Select value={granularity} onValueChange={(v) => setGranularity(v as Granularity)}>
+                <SelectTrigger className="h-9 w-[130px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="daily">Kunlik</SelectItem>
+                  <SelectItem value="weekly">Haftalik</SelectItem>
+                  <SelectItem value="monthly">Oylik</SelectItem>
+                </SelectContent>
+              </Select>
+            </CardHeader>
+            <CardContent>
+              <div className="h-[300px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={dynamicsData}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+                    <YAxis yAxisId="revenue" tick={{ fontSize: 12 }} tickFormatter={(v) => `${(v / 1_000_000).toFixed(0)}M`} />
+                    <YAxis yAxisId="orders" orientation="right" tick={{ fontSize: 12 }} allowDecimals={false} width={28} />
+                    <Tooltip formatter={(value: number, name: string) => [name === "revenue" ? `${value.toLocaleString()} so'm` : `${value} ta`, name === "revenue" ? "Daromad" : "Zakazlar"]} />
+                    <Legend formatter={(v) => (v === "revenue" ? "Daromad (so'm)" : "Zakazlar soni")} />
+                    <Bar yAxisId="revenue" dataKey="revenue" fill="hsl(var(--primary))" radius={[6, 6, 0, 0]} name="revenue" />
+                    <Line yAxisId="orders" type="monotone" dataKey="orders" stroke="#22c55e" strokeWidth={2} name="orders" dot={{ r: 3 }} />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </div>
+            </CardContent>
+          </Card>
+
+          <div className="xl:col-span-4">
+            <DonutCard title="Zakazlar holati" icon={<PieChartIcon className="h-4 w-4 text-muted-foreground" />} unitLabel="zakaz" slices={orderStatusSlices} />
           </div>
         </div>
 
-        {/* Bar Chart - Order Status by Seller */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Hodimlar bo'yicha zakaz holati</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={400}>
-              <BarChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="name" />
-                <YAxis />
-                <Tooltip
-                  content={({ active, payload }) => {
-                    if (active && payload && payload.length) {
-                      return (
-                        <div className="bg-background border rounded p-2 shadow-lg">
-                          <p className="font-semibold">{payload[0].payload.name}</p>
-                          <p className="text-sm">
-                            {payload[0].payload.status}: {payload[0].payload.value} ({payload[0].payload.percent}%)
-                          </p>
-                        </div>
-                      );
-                    }
-                    return null;
-                  }}
-                />
-                <Bar dataKey="value" onClick={(data) => handleViewOrders(data.sellerId, data.name, data.statusKey)} cursor="pointer">
-                  {chartData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.fill} />
-                  ))}
-                  <LabelList
-                    dataKey="percent"
-                    position="top"
-                    formatter={(value: number) => `${value}%`}
-                    style={{ fontSize: '12px', fontWeight: 'bold' }}
-                  />
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
+        {isAdminOrRop && (
+          <div className="grid gap-4 xl:grid-cols-10">
+            <Card className="xl:col-span-6">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <BarChart3 className="h-5 w-5 text-muted-foreground" />
+                  Lidlar manbalari
+                </CardTitle>
+                <p className="text-sm text-muted-foreground">Qaysi manbalardan ko'proq lidlar kelmoqda?</p>
+              </CardHeader>
+              <CardContent>
+                <div className="h-[280px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <RBarChart data={sourceChartData}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                      <XAxis dataKey="source" tick={{ fontSize: 12 }} />
+                      <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
+                      <Tooltip formatter={(value: number) => [`${value} ta`, "Lidlar"]} />
+                      <Bar dataKey="count" radius={[6, 6, 0, 0]}>
+                        {sourceChartData.map((entry, i) => (
+                          <Cell key={i} fill={entry.fill} />
+                        ))}
+                      </Bar>
+                    </RBarChart>
+                  </ResponsiveContainer>
+                  {sourceChartData.length === 0 && <p className="pt-10 text-center text-sm text-muted-foreground">Lidlar topilmadi</p>}
+                </div>
+              </CardContent>
+            </Card>
 
-        {/* Leads by Stage Dialog */}
+            <div className="xl:col-span-4">
+              <StageBreakdownCard rows={stageBreakdown} onRowClick={handleViewStageLeads} />
+            </div>
+          </div>
+        )}
+
+        {isAdminOrRop && (
+          <div className="grid gap-4 xl:grid-cols-10">
+            <div className="xl:col-span-6">
+              <SellerRankingTable rows={sellerRanking} onRowClick={handleViewSellerOrders} />
+            </div>
+            <div className="xl:col-span-4">
+              <DonutCard title="Zakaz turlari" icon={<Boxes className="h-4 w-4 text-muted-foreground" />} unitLabel="ta" slices={orderTypeSlices} />
+            </div>
+          </div>
+        )}
+
         <Dialog open={leadsDialogOpen} onOpenChange={setLeadsDialogOpen}>
           <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
@@ -889,7 +672,6 @@ const Statistics = () => {
           </DialogContent>
         </Dialog>
 
-        {/* Orders Dialog */}
         <Dialog open={ordersDialogOpen} onOpenChange={setOrdersDialogOpen}>
           <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
@@ -917,22 +699,14 @@ const Statistics = () => {
                         <TableCell className="font-medium">#{order.order_number}</TableCell>
                         <TableCell>{order.customer_name}</TableCell>
                         <TableCell>{order.customer_phone || "—"}</TableCell>
+                        <TableCell>{order.region && order.district ? `${order.region}, ${order.district}` : "—"}</TableCell>
+                        <TableCell className="font-semibold">{Number(order.total_amount).toLocaleString()} so'm</TableCell>
                         <TableCell>
-                          {order.region && order.district
-                            ? `${order.region}, ${order.district}`
-                            : "—"}
-                        </TableCell>
-                        <TableCell className="font-semibold">
-                          {order.total_amount.toLocaleString()} so'm
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={getStatusBadgeVariant(order.status)}>
-                            {getStatusLabel(order.status)}
+                          <Badge variant={order.status === "delivered" ? "success" : order.status === "cancelled" ? "destructive" : "secondary"}>
+                            {ORDER_STATUS_LABELS[order.status] || order.status}
                           </Badge>
                         </TableCell>
-                        <TableCell>
-                          {format(new Date(order.order_date), "dd.MM.yyyy")}
-                        </TableCell>
+                        <TableCell>{format(new Date(order.order_date), "dd.MM.yyyy")}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>

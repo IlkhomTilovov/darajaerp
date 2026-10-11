@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { api, ApiError } from "@/lib/api";
+import { useAuth } from "@/hooks/useAuth";
 import DashboardLayout from "@/components/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -29,6 +30,7 @@ interface Task {
 }
 
 const Tasks = () => {
+  const { user } = useAuth();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -40,19 +42,20 @@ const Tasks = () => {
   });
 
   useEffect(() => {
+    if (!user) return;
     fetchTasks();
     requestNotificationPermission();
     checkUpcomingTasks();
-    
+
     // Check for upcoming tasks every minute
     const interval = setInterval(checkUpcomingTasks, 60000);
     return () => clearInterval(interval);
-  }, []);
+  }, [user]);
 
   useEffect(() => {
     // Count overdue tasks
     const now = new Date();
-    const overdue = tasks.filter(task => 
+    const overdue = tasks.filter(task =>
       task.status === "pending" && new Date(task.due_date) < now
     ).length;
     setOverdueCount(overdue);
@@ -69,40 +72,40 @@ const Tasks = () => {
     const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
     const oscillator = audioContext.createOscillator();
     const gainNode = audioContext.createGain();
-    
+
     oscillator.connect(gainNode);
     gainNode.connect(audioContext.destination);
-    
+
     oscillator.frequency.value = 800;
     oscillator.type = 'sine';
-    
+
     gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
     gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
-    
+
     oscillator.start(audioContext.currentTime);
     oscillator.stop(audioContext.currentTime + 0.5);
   };
 
   const checkUpcomingTasks = async () => {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
       const now = new Date();
       const fiveMinutesLater = new Date(now.getTime() + 5 * 60000);
 
-      const { data } = await supabase
-        .from("tasks")
-        .select("*")
-        .eq("seller_id", user.id)
-        .eq("status", "pending")
-        .gte("due_date", now.toISOString())
-        .lte("due_date", fiveMinutesLater.toISOString());
+      const allTasks = await api.tasks.list();
+      const data = allTasks.filter(
+        (t: any) =>
+          t.seller_id === user.id &&
+          t.status === "pending" &&
+          new Date(t.due_date) >= now &&
+          new Date(t.due_date) <= fiveMinutesLater,
+      );
 
-      if (data && data.length > 0) {
+      if (data.length > 0) {
         // Play sound for notifications
         playNotificationSound();
-        
+
         if (Notification.permission === "granted") {
           data.forEach((task) => {
             new Notification("Task eslatmasi", {
@@ -119,35 +122,21 @@ const Tasks = () => {
 
   const fetchTasks = async () => {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
+      // The backend already scopes the list to the caller's own tasks (seller),
+      // or to the whole company for admin/rop, so no role check is needed here.
+      const [taskRows, profiles, leads] = await Promise.all([api.tasks.list(), api.profiles.list(), api.leads.list()]);
+      const nameBySeller = new Map(profiles.map((p: any) => [p.id, p.full_name]));
+      const nameByLead = new Map(leads.map((l: any) => [l.id, l.customer_name]));
 
-      // Check if user has admin or rop role
-      const { data: rolesData } = await supabase
-        .from("user_roles")
-        .select("role")
-        .eq("user_id", user.id);
+      const enriched = taskRows
+        .map((t: any) => ({
+          ...t,
+          profiles: { full_name: nameBySeller.get(t.seller_id) },
+          leads: t.lead_id ? { customer_name: nameByLead.get(t.lead_id) } : undefined,
+        }))
+        .sort((a: any, b: any) => (a.due_date < b.due_date ? -1 : 1));
 
-      const isAdminOrRop = rolesData?.some(r => r.role === "admin" || r.role === "rop");
-
-      // Build query based on role
-      let query = supabase
-        .from("tasks")
-        .select(`
-          *,
-          profiles:seller_id(full_name),
-          leads:lead_id(customer_name)
-        `);
-
-      // If not admin or rop, only show own tasks
-      if (!isAdminOrRop) {
-        query = query.eq("seller_id", user.id);
-      }
-
-      const { data, error } = await query.order("due_date", { ascending: true });
-
-      if (error) throw error;
-      setTasks(data || []);
+      setTasks(enriched);
     } catch (error) {
       console.error("Error fetching tasks:", error);
       toast.error("Tasklar yuklanmadi");
@@ -158,72 +147,42 @@ const Tasks = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!user) return;
 
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error("Foydalanuvchi topilmadi");
-
-      // Get user's company_id
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("company_id")
-        .eq("id", user.id)
-        .single();
-
-      if (!profile?.company_id) {
-        throw new Error("Kompaniya topilmadi");
-      }
-
-      const { error } = await supabase
-        .from("tasks")
-        .insert({
-          title: formData.title,
-          description: formData.description,
-          due_date: new Date(formData.due_date).toISOString(),
-          seller_id: user.id,
-          company_id: profile.company_id,
-        });
-
-      if (error) throw error;
+      await api.tasks.create({
+        title: formData.title,
+        description: formData.description,
+        due_date: new Date(formData.due_date).toISOString(),
+        seller_id: user.id,
+      });
 
       toast.success("Task qo'shildi!");
       setDialogOpen(false);
       setFormData({ title: "", description: "", due_date: "" });
       fetchTasks();
-    } catch (error: any) {
-      toast.error(error.message);
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : "Xatolik yuz berdi");
     }
   };
 
   const markAsComplete = async (taskId: string) => {
     try {
-      const { error } = await supabase
-        .from("tasks")
-        .update({ status: "completed" })
-        .eq("id", taskId);
-
-      if (error) throw error;
-
+      await api.tasks.update(taskId, { status: "completed" });
       toast.success("Task bajarildi!");
       fetchTasks();
-    } catch (error: any) {
-      toast.error(error.message);
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : "Xatolik yuz berdi");
     }
   };
 
   const deleteTask = async (taskId: string) => {
     try {
-      const { error } = await supabase
-        .from("tasks")
-        .delete()
-        .eq("id", taskId);
-
-      if (error) throw error;
-
+      await api.tasks.remove(taskId);
       toast.success("Task o'chirildi!");
       fetchTasks();
-    } catch (error: any) {
-      toast.error(error.message);
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : "Xatolik yuz berdi");
     }
   };
 

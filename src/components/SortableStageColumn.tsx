@@ -11,6 +11,7 @@ interface SortableStageColumnProps {
   onStageChange: (leadId: string, newStageId: string) => void;
   onDragStart: (event: DragStartEvent) => void;
   onDragEnd: (event: DragEndEvent) => void;
+  onAddLead?: (stageId: string) => void;
 }
 
 const SortableStageColumn = ({
@@ -20,7 +21,8 @@ const SortableStageColumn = ({
   stages,
   onStageChange,
   onDragStart,
-  onDragEnd
+  onDragEnd,
+  onAddLead,
 }: SortableStageColumnProps) => {
   const {
     attributes,
@@ -47,13 +49,6 @@ const SortableStageColumn = ({
 
   return (
     <div ref={setNodeRef} style={style}>
-      <div 
-        {...attributes} 
-        {...listeners}
-        className="cursor-grab active:cursor-grabbing mb-2 p-2 bg-muted/50 rounded-lg"
-      >
-        <h3 className="font-semibold text-center">{stage.name}</h3>
-      </div>
       <DndContext
         sensors={sensors}
         onDragStart={onDragStart}
@@ -68,6 +63,8 @@ const SortableStageColumn = ({
           stageData={stage}
           stages={stages}
           onStageChange={onStageChange}
+          onAddLead={onAddLead}
+          dragHandleProps={{ ...attributes, ...listeners }}
         />
       </DndContext>
     </div>

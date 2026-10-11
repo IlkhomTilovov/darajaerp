@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { api, ApiError } from "@/lib/api";
+import { useAuth } from "@/hooks/useAuth";
 import DashboardLayout from "@/components/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -13,6 +14,7 @@ import { format, startOfMonth, endOfMonth, subMonths } from "date-fns";
 import { useUserRoles } from "@/hooks/useUserRoles";
 
 const Profile = () => {
+  const { user } = useAuth();
   const { isAdminOrRop } = useUserRoles();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -38,23 +40,16 @@ const Profile = () => {
   });
 
   useEffect(() => {
-    fetchProfile();
-    fetchStats();
-  }, []);
+    if (user) {
+      fetchProfile();
+      fetchStats();
+    }
+  }, [user]);
 
   const fetchProfile = async () => {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
-
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("id", user.id)
-        .single();
-
-      if (error) throw error;
-
+      const data = await api.profiles.get(user.id);
       setProfile(data);
       setFormData({
         full_name: data.full_name || "",
@@ -69,7 +64,6 @@ const Profile = () => {
 
   const fetchStats = async () => {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
       const thisMonthStart = startOfMonth(new Date());
@@ -77,27 +71,17 @@ const Profile = () => {
       const lastMonthStart = startOfMonth(subMonths(new Date(), 1));
       const lastMonthEnd = endOfMonth(subMonths(new Date(), 1));
 
-      // This month
-      const { data: thisMonthOrders } = await supabase
-        .from("orders")
-        .select("*")
-        .eq("seller_id", user.id)
-        .gte("order_date", format(thisMonthStart, "yyyy-MM-dd"))
-        .lte("order_date", format(thisMonthEnd, "yyyy-MM-dd"));
+      const allOrders = await api.orders.list();
+      const ownOrders = allOrders.filter((o: any) => o.seller_id === user.id);
 
-      // Last month
-      const { data: lastMonthOrders } = await supabase
-        .from("orders")
-        .select("*")
-        .eq("seller_id", user.id)
-        .gte("order_date", format(lastMonthStart, "yyyy-MM-dd"))
-        .lte("order_date", format(lastMonthEnd, "yyyy-MM-dd"));
+      const inRange = (dateStr: string, start: Date, end: Date) => {
+        const d = format(start, "yyyy-MM-dd");
+        const e = format(end, "yyyy-MM-dd");
+        return dateStr >= d && dateStr <= e;
+      };
 
-      // Total
-      const { data: allOrders } = await supabase
-        .from("orders")
-        .select("*")
-        .eq("seller_id", user.id);
+      const thisMonthOrders = ownOrders.filter((o: any) => inRange(o.order_date, thisMonthStart, thisMonthEnd));
+      const lastMonthOrders = ownOrders.filter((o: any) => inRange(o.order_date, lastMonthStart, lastMonthEnd));
 
       const calculateStats = (orders: any[]) => ({
         orders: orders?.length || 0,
@@ -105,9 +89,9 @@ const Profile = () => {
       });
 
       setStats({
-        thisMonth: calculateStats(thisMonthOrders || []),
-        lastMonth: calculateStats(lastMonthOrders || []),
-        total: calculateStats(allOrders || []),
+        thisMonth: calculateStats(thisMonthOrders),
+        lastMonth: calculateStats(lastMonthOrders),
+        total: calculateStats(ownOrders),
       });
     } catch (error) {
       console.error("Error fetching stats:", error);
@@ -119,23 +103,16 @@ const Profile = () => {
     setSaving(true);
 
     try {
-      const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
-
-      const { error } = await supabase
-        .from("profiles")
-        .update({
-          full_name: formData.full_name,
-          phone: formData.phone,
-        })
-        .eq("id", user.id);
-
-      if (error) throw error;
+      await api.profiles.update(user.id, {
+        full_name: formData.full_name,
+        phone: formData.phone,
+      });
 
       toast.success("Profil yangilandi!");
       fetchProfile();
-    } catch (error: any) {
-      toast.error(error.message);
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : "Xatolik yuz berdi");
     } finally {
       setSaving(false);
     }
@@ -145,33 +122,17 @@ const Profile = () => {
     e.preventDefault();
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) throw new Error("Not authenticated");
-
-      const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-user`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${session.access_token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(newUserData),
-      });
-
-      const result = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(result.error || 'Failed to create user');
-      }
+      await api.admin.createUser(newUserData);
 
       setCreatedCredentials({
         email: newUserData.email,
         password: newUserData.password,
       });
-      
+
       toast.success("Foydalanuvchi yaratildi!");
       setCreateUserDialogOpen(false);
       setCredentialsDialogOpen(true);
-      
+
       setNewUserData({
         email: "",
         password: "",
@@ -179,8 +140,8 @@ const Profile = () => {
         phone: "",
         role: "sotuvchi",
       });
-    } catch (error: any) {
-      toast.error(error.message);
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : "Xatolik yuz berdi");
     }
   };
 
@@ -376,7 +337,7 @@ const Profile = () => {
                     <Mail className="h-4 w-4 inline mr-2" />
                     Email
                   </Label>
-                  <Input value={profile?.id} disabled className="bg-muted" />
+                  <Input value={user?.email} disabled className="bg-muted" />
                 </div>
                 <div className="space-y-2">
                   <Label>

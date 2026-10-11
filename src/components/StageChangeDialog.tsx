@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { format } from "date-fns";
 import { CalendarIcon } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { api, ApiError } from "@/lib/api";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -22,13 +22,9 @@ import {
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 
-// Stages where task is NOT required (only comment is mandatory)
-const TASK_OPTIONAL_STAGE_IDS = [
-  "ad598efe-b15f-4809-bdf1-4afcdc9abf42", // Sotildi
-  "97dac92a-654a-4ce3-8501-317648f22795", // Keyin oladi
-  "adc7a8bf-d7c2-4dc5-b89b-6d1da828ce84", // Sifatsiz
-  "dab83451-1ee6-44ec-a16c-ecbf54df8430", // Olmaydi
-];
+// Stages where task is NOT required (only comment is mandatory).
+// Matched by name rather than id, since stage ids are generated per-environment.
+const TASK_OPTIONAL_STAGE_NAMES = ["Sotildi", "Keyin oladi", "Sifatsiz", "Olmaydi"];
 
 interface StageChangeDialogProps {
   open: boolean;
@@ -58,7 +54,7 @@ export function StageChangeDialog({
   const [taskTime, setTaskTime] = useState("12:00");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const isTaskOptional = TASK_OPTIONAL_STAGE_IDS.includes(newStageId);
+  const isTaskOptional = TASK_OPTIONAL_STAGE_NAMES.includes(newStageName);
 
   const handleSubmit = async () => {
     if (!comment.trim()) {
@@ -82,38 +78,8 @@ export function StageChangeDialog({
     setIsSubmitting(true);
 
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        toast.error("Foydalanuvchi topilmadi");
-        return;
-      }
-
-      // Get user's company_id
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("company_id")
-        .eq("id", user.id)
-        .single();
-
-      if (!profile?.company_id) {
-        toast.error("Kompaniya topilmadi");
-        return;
-      }
-
       // 1. Save comment
-      const { error: commentError } = await supabase
-        .from("lead_comments")
-        .insert({
-          lead_id: leadId,
-          user_id: user.id,
-          comment: comment.trim(),
-        });
-
-      if (commentError) {
-        console.error("Comment error:", commentError);
-        toast.error("Izohni saqlashda xatolik");
-        return;
-      }
+      await api.leads.comments.create(leadId, comment.trim());
 
       // 2. Create task with time (only if task fields are filled or required)
       if (taskTitle.trim() && taskDate) {
@@ -121,36 +87,18 @@ export function StageChangeDialog({
         const dueDate = new Date(taskDate);
         dueDate.setHours(hours, minutes, 0, 0);
 
-        const { error: taskError } = await supabase
-          .from("tasks")
-          .insert({
-            lead_id: leadId,
-            seller_id: sellerId,
-            title: taskTitle.trim(),
-            description: taskDescription.trim() || null,
-            due_date: dueDate.toISOString(),
-            status: "pending",
-            company_id: profile.company_id,
-          });
-
-        if (taskError) {
-          console.error("Task error:", taskError);
-          toast.error("Vazifani yaratishda xatolik");
-          return;
-        }
+        await api.tasks.create({
+          lead_id: leadId,
+          seller_id: sellerId,
+          title: taskTitle.trim(),
+          description: taskDescription.trim() || null,
+          due_date: dueDate.toISOString(),
+          status: "pending",
+        });
       }
 
       // 3. Update lead stage
-      const { error: stageError } = await supabase
-        .from("leads")
-        .update({ stage: newStageId })
-        .eq("id", leadId);
-
-      if (stageError) {
-        console.error("Stage error:", stageError);
-        toast.error("Bosqichni o'zgartirishda xatolik");
-        return;
-      }
+      await api.leads.update(leadId, { stage: newStageId });
 
       toast.success(`Lid "${newStageName}" bosqichiga o'tkazildi`);
       
@@ -165,7 +113,7 @@ export function StageChangeDialog({
       onSuccess();
     } catch (error) {
       console.error("Error:", error);
-      toast.error("Xatolik yuz berdi");
+      toast.error(error instanceof ApiError ? error.message : "Xatolik yuz berdi");
     } finally {
       setIsSubmitting(false);
     }

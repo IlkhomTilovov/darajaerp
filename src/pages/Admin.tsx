@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { api, ApiError } from "@/lib/api";
+import { useAuth } from "@/hooks/useAuth";
 import DashboardLayout from "@/components/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,6 +16,7 @@ import { useUserRoles } from "@/hooks/useUserRoles";
 import { useNavigate } from "react-router-dom";
 
 const Admin = () => {
+  const { user } = useAuth();
   const { isAdminOrRop, isAdmin, loading: roleLoading } = useUserRoles();
   const navigate = useNavigate();
   const [sellers, setSellers] = useState<any[]>([]);
@@ -52,18 +54,8 @@ const Admin = () => {
 
   const fetchCurrentUserProfile = async () => {
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
       if (!user) return;
-
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("id", user.id)
-        .maybeSingle();
-
-      if (error) throw error;
+      const data = await api.profiles.get(user.id);
       setCurrentUserProfile(data);
     } catch (error) {
       console.error("Error fetching current user profile:", error);
@@ -72,28 +64,8 @@ const Admin = () => {
 
   const fetchAllUsers = async () => {
     try {
-      const [profilesRes, rolesRes] = await Promise.all([
-        supabase.from("profiles").select("*").order("created_at", { ascending: false }),
-        supabase.from("user_roles").select("user_id, role"),
-      ]);
-
-      if (profilesRes.error) throw profilesRes.error;
-      if (rolesRes.error) throw rolesRes.error;
-
-      const rolesByUser = new Map<string, Array<{ role: string }>>();
-      (rolesRes.data || []).forEach((r) => {
-        const list = rolesByUser.get(r.user_id) ?? [];
-        list.push({ role: r.role });
-        rolesByUser.set(r.user_id, list);
-      });
-
-      const merged = (profilesRes.data || []).map((p) => ({
-        ...p,
-        // FK yo'q bo'lgani uchun rollarni qo'lda biriktiramiz
-        user_roles: rolesByUser.get(p.id) ?? [],
-      }));
-
-      setAllUsers(merged);
+      const data = await api.admin.listUsers();
+      setAllUsers(data.map((p: any) => ({ ...p, user_roles: (p.roles ?? []).map((role: string) => ({ role })) })));
     } catch (error) {
       console.error("Error fetching users:", error);
     }
@@ -101,35 +73,16 @@ const Admin = () => {
 
   const fetchSellers = async () => {
     try {
-      const { data, error } = await supabase
-        .from("profiles")
-        .select(`
-          *,
-          user_roles!inner(role)
-        `)
-        .eq("user_roles.role", "sotuvchi")
-        .order("created_at", { ascending: false });
+      const [users, orders] = await Promise.all([api.admin.listUsers(), api.orders.list()]);
+      const sellersOnly = users.filter((u: any) => (u.roles ?? []).includes("sotuvchi"));
 
-      if (error) throw error;
+      const sellersWithStats = sellersOnly.map((seller: any) => {
+        const sellerOrders = orders.filter((o: any) => o.seller_id === seller.id);
+        const totalOrders = sellerOrders.length;
+        const totalRevenue = sellerOrders.reduce((sum: number, o: any) => sum + parseFloat(String(o.total_amount)), 0);
 
-      // Fetch order stats for each seller
-      const sellersWithStats = await Promise.all(
-        (data || []).map(async (seller) => {
-          const { data: orders } = await supabase
-            .from("orders")
-            .select("*")
-            .eq("seller_id", seller.id);
-
-          const totalOrders = orders?.length || 0;
-          const totalRevenue = orders?.reduce((sum, o) => sum + parseFloat(String(o.total_amount)), 0) || 0;
-
-          return {
-            ...seller,
-            totalOrders,
-            totalRevenue,
-          };
-        })
-      );
+        return { ...seller, totalOrders, totalRevenue };
+      });
 
       setSellers(sellersWithStats);
     } catch (error) {
@@ -144,40 +97,18 @@ const Admin = () => {
     e.preventDefault();
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) throw new Error("Not authenticated");
-
-      const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-user`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${session.access_token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          email: formData.email,
-          password: formData.password,
-          full_name: formData.full_name,
-          phone: formData.phone,
-          role: formData.role,
-        }),
-      });
-
-      const result = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(result.error || 'Failed to create seller');
-      }
+      await api.admin.createUser(formData);
 
       // Save credentials to show in dialog
       setCreatedCredentials({
         email: formData.email,
         password: formData.password,
       });
-      
+
       toast.success(formData.role === "sotuvchi" ? "Sotuvchi yaratildi!" : formData.role === "rop" ? "ROP yaratildi!" : "Admin yaratildi!");
       setDialogOpen(false);
       setCredentialsDialogOpen(true);
-      
+
       // Reset form
       setFormData({
         email: "",
@@ -187,8 +118,8 @@ const Admin = () => {
         role: "sotuvchi",
       });
       fetchSellers();
-    } catch (error: any) {
-      toast.error(error.message);
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : "Xatolik yuz berdi");
     } finally {
       setFormData({ email: "", password: "", full_name: "", phone: "", role: "sotuvchi" });
     }
@@ -203,33 +134,23 @@ const Admin = () => {
     if (!selectedUser) return;
     
     try {
-      const { error } = await supabase
-        .from("profiles")
-        .update({ telegram_user_id: telegramId || null })
-        .eq("id", selectedUser.id);
+      await api.profiles.update(selectedUser.id, { telegram_user_id: telegramId || null });
 
-      if (error) throw error;
-      
       toast.success("Telegram ID saqlandi!");
       setTelegramDialogOpen(false);
       setSelectedUser(null);
       setTelegramId("");
       fetchAllUsers();
       fetchSellers();
-    } catch (error: any) {
-      toast.error(error.message);
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : "Xatolik yuz berdi");
     }
   };
 
   const handleRemoveTelegramId = async (userId: string) => {
     try {
-      const { error } = await supabase
-        .from("profiles")
-        .update({ telegram_user_id: null })
-        .eq("id", userId);
+      await api.profiles.update(userId, { telegram_user_id: null });
 
-      if (error) throw error;
-      
       toast.success("Telegram ID o'chirildi!");
       fetchAllUsers();
       fetchSellers();

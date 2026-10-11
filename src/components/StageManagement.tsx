@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { supabase } from "@/integrations/supabase/client";
+import { api } from "@/lib/api";
 import { toast } from "sonner";
 import { Settings, Plus, Pencil, Trash2 } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -44,13 +44,8 @@ const StageManagement = ({ onUpdate }: StageManagementProps) => {
 
   const fetchStages = async () => {
     try {
-      const { data, error } = await supabase
-        .from("stages")
-        .select("*")
-        .order("display_order");
-
-      if (error) throw error;
-      setStages(data || []);
+      const data = await api.stages.list();
+      setStages(data.sort((a: any, b: any) => a.display_order - b.display_order));
     } catch (error) {
       console.error("Error fetching stages:", error);
     }
@@ -66,27 +61,18 @@ const StageManagement = ({ onUpdate }: StageManagementProps) => {
 
     try {
       if (editingStage) {
-        const { error } = await supabase
-          .from("stages")
-          .update({
-            name: formData.name,
-            color: formData.color,
-            display_order: formData.display_order
-          })
-          .eq("id", editingStage.id);
-
-        if (error) throw error;
+        await api.stages.update(editingStage.id, {
+          name: formData.name,
+          color: formData.color,
+          display_order: formData.display_order,
+        });
         toast.success("Bosqich yangilandi");
       } else {
-        const { error } = await supabase
-          .from("stages")
-          .insert({
-            name: formData.name,
-            color: formData.color,
-            display_order: formData.display_order
-          });
-
-        if (error) throw error;
+        await api.stages.create({
+          name: formData.name,
+          color: formData.color,
+          display_order: formData.display_order,
+        });
         toast.success("Bosqich qo'shildi");
       }
 
@@ -113,12 +99,7 @@ const StageManagement = ({ onUpdate }: StageManagementProps) => {
     if (!deleteStageId) return;
 
     try {
-      const { error } = await supabase
-        .from("stages")
-        .delete()
-        .eq("id", deleteStageId);
-
-      if (error) throw error;
+      await api.stages.remove(deleteStageId);
 
       toast.success("Bosqich o'chirildi");
       setDeleteStageId(null);

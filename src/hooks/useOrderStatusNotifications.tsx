@@ -1,76 +1,55 @@
 import { useEffect, useRef } from 'react';
-import { supabase } from '@/integrations/supabase/client';
+import { api } from '@/lib/api';
+import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
 
-interface OrderPayload {
-  new: {
-    id: string;
-    order_number: number;
-    customer_name: string;
-    status: string;
-    seller_id: string;
-  };
-  old: {
-    id: string;
-    status: string;
-    seller_id: string;
-  };
-}
-
+// Polls the seller's own orders and toasts when their status changes to
+// cancelled/delivered (replaces the old Supabase realtime subscription).
 export const useOrderStatusNotifications = () => {
-  const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const { user } = useAuth();
+  const knownStatuses = useRef<Map<string, string>>(new Map());
+  const initialized = useRef(false);
 
   useEffect(() => {
-    const setupSubscription = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
+    if (!user) return;
 
-      // Subscribe to order changes for the current user
-      channelRef.current = supabase
-        .channel('order-status-changes')
-        .on(
-          'postgres_changes',
-          {
-            event: 'UPDATE',
-            schema: 'public',
-            table: 'orders',
-            filter: `seller_id=eq.${user.id}`,
-          },
-          (payload: { new: any; old: any }) => {
-            const newData = payload.new as OrderPayload['new'];
-            const oldData = payload.old as OrderPayload['old'];
+    const checkOrders = async () => {
+      try {
+        const orders = await api.orders.list();
+        const ownOrders = orders.filter((o: any) => o.seller_id === user.id);
 
-            // Check if status changed to cancelled or delivered
-            if (oldData.status !== newData.status) {
-              if (newData.status === 'cancelled') {
-                toast.error(
-                  `🚫 Zakaz #${newData.order_number} bekor qilindi!`,
-                  {
-                    description: `Mijoz: ${newData.customer_name}`,
-                    duration: 10000,
-                  }
-                );
-              } else if (newData.status === 'delivered') {
-                toast.success(
-                  `✅ Zakaz #${newData.order_number} tasdiqlandi!`,
-                  {
-                    description: `Mijoz: ${newData.customer_name}`,
-                    duration: 10000,
-                  }
-                );
-              }
+        if (!initialized.current) {
+          for (const order of ownOrders) {
+            knownStatuses.current.set(order.id, order.status);
+          }
+          initialized.current = true;
+          return;
+        }
+
+        for (const order of ownOrders) {
+          const previousStatus = knownStatuses.current.get(order.id);
+          if (previousStatus && previousStatus !== order.status) {
+            if (order.status === 'cancelled') {
+              toast.error(`🚫 Zakaz #${order.order_number} bekor qilindi!`, {
+                description: `Mijoz: ${order.customer_name}`,
+                duration: 10000,
+              });
+            } else if (order.status === 'delivered') {
+              toast.success(`✅ Zakaz #${order.order_number} tasdiqlandi!`, {
+                description: `Mijoz: ${order.customer_name}`,
+                duration: 10000,
+              });
             }
           }
-        )
-        .subscribe();
-    };
-
-    setupSubscription();
-
-    return () => {
-      if (channelRef.current) {
-        supabase.removeChannel(channelRef.current);
+          knownStatuses.current.set(order.id, order.status);
+        }
+      } catch (error) {
+        console.error('Error checking order status changes:', error);
       }
     };
-  }, []);
+
+    checkOrders();
+    const interval = setInterval(checkOrders, 30000);
+    return () => clearInterval(interval);
+  }, [user]);
 };

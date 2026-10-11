@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { api } from "@/lib/api";
+import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
 import { Bell, Clock, X } from "lucide-react";
 import { Button } from "./ui/button";
@@ -17,6 +18,7 @@ interface Task {
 }
 
 const TaskNotifications = () => {
+  const { user } = useAuth();
   const [overdueTasks, setOverdueTasks] = useState<Task[]>([]);
   const [upcomingTasks, setUpcomingTasks] = useState<Task[]>([]);
   const [dismissed, setDismissed] = useState<string[]>([]);
@@ -88,91 +90,74 @@ const TaskNotifications = () => {
       console.log('Sending Telegram reminder for task:', task.id);
       sentReminders.current.add(task.id);
       
-      const response = await supabase.functions.invoke('send-task-reminder', {
-        body: {
-          task: {
-            task_id: task.id,
-            task_title: task.title,
-            task_description: task.description,
-            due_date: task.due_date,
-            seller_id: userId,
-            customer_name: task.leads?.customer_name
-          }
-        }
+      const response = await api.integrations.telegramTaskReminder({
+        task: {
+          task_id: task.id,
+          task_title: task.title,
+          task_description: task.description,
+          due_date: task.due_date,
+          seller_id: userId,
+          customer_name: task.leads?.customer_name,
+        },
       });
 
-      if (response.error) {
-        console.error('Error sending telegram reminder:', response.error);
-      } else {
-        console.log('Telegram reminder sent successfully:', response.data);
-      }
+      console.log('Telegram reminder sent successfully:', response);
     } catch (error) {
       console.error('Failed to send telegram reminder:', error);
     }
   }, []);
 
-  // Move overdue leads to "Muhim" stage
+  // Move overdue leads to the "Muhim" stage, looked up by name since stage ids are per-environment.
   const moveOverdueLeadsToMuhim = useCallback(async (overdueTasks: Task[]) => {
-    const MUHIM_STAGE_ID = "1aa6d478-0e36-4642-b5c5-e2a6b6985c08";
-    
-    for (const task of overdueTasks) {
-      if (task.lead_id) {
+    const relevantTasks = overdueTasks.filter((t) => t.lead_id);
+    if (relevantTasks.length === 0) return;
+
+    try {
+      const stages = await api.stages.list();
+      const muhimStage = stages.find((s: any) => s.name === "Muhim");
+      if (!muhimStage) return;
+
+      for (const task of relevantTasks) {
         try {
-          // Check current stage - only move if not already in Muhim
-          const { data: lead } = await supabase
-            .from("leads")
-            .select("stage")
-            .eq("id", task.lead_id)
-            .maybeSingle();
-
-          if (lead && lead.stage !== MUHIM_STAGE_ID) {
-            const { error } = await supabase
-              .from("leads")
-              .update({ stage: MUHIM_STAGE_ID })
-              .eq("id", task.lead_id);
-
-            if (error) {
-              console.error("Error moving lead to Muhim:", error);
-            } else {
-              console.log(`Lead ${task.lead_id} moved to Muhim stage due to overdue task`);
-            }
+          const lead = await api.leads.get(task.lead_id as string);
+          if (lead && lead.stage !== muhimStage.id) {
+            await api.leads.update(task.lead_id as string, { stage: muhimStage.id });
+            console.log(`Lead ${task.lead_id} moved to Muhim stage due to overdue task`);
           }
         } catch (error) {
           console.error("Error checking/moving lead:", error);
         }
       }
+    } catch (error) {
+      console.error("Error loading stages:", error);
     }
   }, []);
 
   const checkTasks = useCallback(async () => {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
       const now = new Date();
       const fiveMinutesLater = new Date(now.getTime() + 5 * 60 * 1000);
-      
-      // Fetch overdue tasks
-      const { data: overdueData } = await supabase
-        .from("tasks")
-        .select("id, title, description, due_date, status, lead_id, leads(customer_name)")
-        .eq("seller_id", user.id)
-        .eq("status", "pending")
-        .lt("due_date", now.toISOString())
-        .order("due_date", { ascending: true });
 
-      // Fetch upcoming tasks (due in next 5 minutes)
-      const { data: upcomingData } = await supabase
-        .from("tasks")
-        .select("id, title, description, due_date, status, lead_id, leads(customer_name)")
-        .eq("seller_id", user.id)
-        .eq("status", "pending")
-        .gte("due_date", now.toISOString())
-        .lte("due_date", fiveMinutesLater.toISOString())
-        .order("due_date", { ascending: true });
+      const [allTasks, allLeads] = await Promise.all([api.tasks.list(), api.leads.list()]);
+      const leadNameById = new Map(allLeads.map((l: any) => [l.id, l.customer_name]));
+      const ownPending = allTasks.filter((t: any) => t.seller_id === user.id && t.status === "pending");
 
-      const newOverdueTasks = (overdueData || []) as Task[];
-      const newUpcomingTasks = (upcomingData || []) as Task[];
+      const attachLead = (t: any): Task => ({
+        ...t,
+        leads: t.lead_id ? { customer_name: leadNameById.get(t.lead_id) } : null,
+      });
+
+      const newOverdueTasks = ownPending
+        .filter((t: any) => new Date(t.due_date) < now)
+        .sort((a: any, b: any) => (a.due_date < b.due_date ? -1 : 1))
+        .map(attachLead);
+
+      const newUpcomingTasks = ownPending
+        .filter((t: any) => new Date(t.due_date) >= now && new Date(t.due_date) <= fiveMinutesLater)
+        .sort((a: any, b: any) => (a.due_date < b.due_date ? -1 : 1))
+        .map(attachLead);
 
       // Move overdue task leads to Muhim stage
       if (newOverdueTasks.length > 0) {
@@ -239,35 +224,18 @@ const TaskNotifications = () => {
     } catch (error) {
       console.error("Error checking tasks:", error);
     }
-  }, [overdueTasks, upcomingTasks, playNotificationSound, sendBrowserNotification, sendTelegramReminder, moveOverdueLeadsToMuhim]);
+  }, [user, overdueTasks, upcomingTasks, playNotificationSound, sendBrowserNotification, sendTelegramReminder, moveOverdueLeadsToMuhim]);
 
   useEffect(() => {
+    if (!user) return;
+
     checkTasks();
-    
+
     // Check tasks every 30 seconds
     const interval = setInterval(checkTasks, 30000);
-    
-    // Setup realtime subscription
-    const channel = supabase
-      .channel('task-notifications')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'tasks'
-        },
-        () => {
-          checkTasks();
-        }
-      )
-      .subscribe();
 
-    return () => {
-      clearInterval(interval);
-      supabase.removeChannel(channel);
-    };
-  }, []);
+    return () => clearInterval(interval);
+  }, [user]);
 
   const handleTaskClick = (task: Task) => {
     if (task.lead_id) {

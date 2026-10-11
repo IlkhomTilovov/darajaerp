@@ -1,10 +1,10 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Phone, User, DollarSign, Facebook } from "lucide-react";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Phone, Calendar as CalendarIcon, MessageCircle } from "lucide-react";
 import { format } from "date-fns";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { supabase } from "@/integrations/supabase/client";
-import { toast } from "sonner";
+import { getAvatarColor, getInitials, getLeadSourceStyle, getLeadTypeStyle } from "@/lib/leadDisplay";
+import LeadStatusMenu from "@/components/leads/LeadStatusMenu";
 
 interface LeadCardProps {
   lead: any;
@@ -16,155 +16,84 @@ interface LeadCardProps {
   onLeadUpdate?: () => void;
 }
 
-const DELIVERY_STATUS_OPTIONS = [
-  { value: "Jarayonda", label: "Jarayonda", color: "bg-yellow-500" },
-  { value: "Tasdiqlandi", label: "Tasdiqlandi", color: "bg-green-500" },
-  { value: "Bekor bo'ldi", label: "Bekor bo'ldi", color: "bg-red-500" }
-];
-
-const LeadCard = ({ lead, isDragging, onClick, stage, stages, onStageChange, onLeadUpdate }: LeadCardProps) => {
-  const activityOptions = [
-    "O'ylab ko'radi",
-    "Mavjud emas",
-    "Qimmatlik qildi",
-    "Telegramdan ma'lumot",
-    "Hozir gaplashaolmaydi",
-    "Keyinroq oladi",
-    "O'chiq",
-    "Umid bor"
-  ];
-
-
-  const handleActionStatusChange = async (newActionStatus: string) => {
-    try {
-      const { error } = await supabase
-        .from("leads")
-        .update({ action_status: newActionStatus })
-        .eq("id", lead.id);
-
-      if (error) throw error;
-      toast.success("Amal yangilandi!");
-    } catch (error) {
-      console.error("Error updating action status:", error);
-      toast.error("Amalni yangilashda xato");
-    }
-  };
-
-  const handleDeliveryStatusChange = async (newDeliveryStatus: string) => {
-    try {
-      const { error } = await supabase
-        .from("leads")
-        .update({ delivery_status: newDeliveryStatus })
-        .eq("id", lead.id);
-
-      if (error) throw error;
-      toast.success("Yetkazish holati yangilandi!");
-      if (onLeadUpdate) onLeadUpdate();
-    } catch (error) {
-      console.error("Error updating delivery status:", error);
-      toast.error("Yetkazish holatini yangilashda xato");
-    }
-  };
-
-  // Check if lead is in "Sotildi" stage
-  const isSoldStage = stage?.name === "Sotildi" || stages?.find(s => s.id === lead.stage)?.name === "Sotildi";
+const LeadCard = ({ lead, isDragging, onClick, stage, stages, onLeadUpdate }: LeadCardProps) => {
+  const isSoldStage = stage?.name === "Sotildi" || stages?.find((s) => s.id === lead.stage)?.name === "Sotildi";
+  const sourceStyle = getLeadSourceStyle(lead.source);
+  const typeStyle = getLeadTypeStyle(lead.lead_type);
+  const sellerName = lead.profiles?.full_name;
+  const preview = lead.notes || lead.activity;
 
   return (
-    <Card 
-      className={`cursor-pointer hover:shadow-lg transition-shadow ${isDragging ? 'opacity-50' : ''}`}
+    <Card
+      className={`cursor-pointer border-border/70 transition-shadow hover:shadow-md ${isDragging ? "opacity-50" : ""}`}
       onClick={onClick}
     >
-      <CardContent className="p-4 space-y-3">
-        <div className="flex items-start justify-between">
-          <div className="flex-1">
-            <div className="flex items-center gap-2 mb-1">
-              <h3 className="font-semibold text-base">{lead.customer_name}</h3>
-              {lead.source?.toLowerCase().includes('facebook') && (
-                <Facebook className="h-4 w-4 text-blue-600" />
-              )}
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {format(new Date(lead.created_at), 'dd.MM.yyyy HH:mm')}
-            </p>
-          </div>
-          <div className="flex flex-col gap-1 items-end">
-            {lead.lead_type && (
-              <Badge variant="outline" className="text-xs">
-                {lead.lead_type}
-              </Badge>
-            )}
-          </div>
+      <CardContent className="space-y-2.5 p-3.5">
+        <div className="flex items-start justify-between gap-2">
+          <h3 className="truncate text-sm font-semibold leading-tight">{lead.customer_name}</h3>
+          {lead.lead_type && (
+            <Badge variant="outline" className={`shrink-0 whitespace-nowrap text-[10px] ${typeStyle.badgeClassName}`}>
+              {lead.lead_type}
+            </Badge>
+          )}
         </div>
-
 
         {lead.customer_phone && (
-          <div className="flex items-center gap-2 text-sm">
-            <Phone className="h-3.5 w-3.5 text-muted-foreground" />
-            <span>{lead.customer_phone}</span>
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Phone className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate">{lead.customer_phone}</span>
           </div>
         )}
 
-        {lead.profiles?.full_name && (
-          <div className="flex items-center gap-2 text-sm">
-            <User className="h-3.5 w-3.5 text-muted-foreground" />
-            <span>{lead.profiles.full_name}</span>
+        {preview && <p className="line-clamp-1 text-xs text-muted-foreground">{preview}</p>}
+
+        <div className="flex items-center justify-between gap-2">
+          {lead.source ? (
+            <Badge variant="outline" className={`text-[10px] ${sourceStyle.badgeClassName}`}>
+              {sourceStyle.label}
+            </Badge>
+          ) : (
+            <span />
+          )}
+          <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
+            <CalendarIcon className="h-3 w-3" />
+            {format(new Date(lead.created_at), "dd.MM.yyyy HH:mm")}
           </div>
-        )}
-
-        {lead.price && (
-          <div className="flex items-center gap-2 text-sm font-medium">
-            <DollarSign className="h-3.5 w-3.5 text-primary" />
-            <span>{lead.price.toLocaleString()} so'm</span>
-          </div>
-        )}
-
-        {lead.notes && (
-          <p className="text-xs text-muted-foreground line-clamp-2 mt-2 pt-2 border-t">
-            {lead.notes}
-          </p>
-        )}
-
-        <div className="mt-2 pt-2 border-t" onClick={(e) => e.stopPropagation()}>
-          <label className="text-xs font-medium text-muted-foreground mb-1 block">
-            Amallar
-          </label>
-          <Select value={lead.action_status || ""} onValueChange={handleActionStatusChange}>
-            <SelectTrigger className="h-8 text-xs">
-              <SelectValue placeholder="Amalni tanlang" />
-            </SelectTrigger>
-            <SelectContent>
-              {activityOptions.map((option) => (
-                <SelectItem key={option} value={option}>
-                  {option}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
         </div>
 
-        {/* Delivery Status - Only for Sotildi stage */}
-        {isSoldStage && (
-          <div className="mt-2 pt-2 border-t" onClick={(e) => e.stopPropagation()}>
-            <label className="text-xs font-medium text-muted-foreground mb-1 block">
-              Yetkazish holati
-            </label>
-            <Select value={lead.delivery_status || ""} onValueChange={handleDeliveryStatusChange}>
-              <SelectTrigger className="h-8 text-xs">
-                <SelectValue placeholder="Holatni tanlang" />
-              </SelectTrigger>
-              <SelectContent>
-                {DELIVERY_STATUS_OPTIONS.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    <div className="flex items-center gap-2">
-                      <div className={`w-2 h-2 rounded-full ${option.color}`} />
-                      {option.label}
-                    </div>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+        <div className="flex items-center justify-between border-t pt-2.5">
+          <div className="flex min-w-0 items-center gap-1.5">
+            {sellerName && (
+              <>
+                <Avatar className="h-5 w-5">
+                  <AvatarFallback className={`text-[9px] font-semibold ${getAvatarColor(sellerName)}`}>
+                    {getInitials(sellerName)}
+                  </AvatarFallback>
+                </Avatar>
+                <span className="truncate text-xs text-muted-foreground">{sellerName}</span>
+              </>
+            )}
           </div>
-        )}
+
+          <div className="flex shrink-0 items-center" onClick={(e) => e.stopPropagation()}>
+            {lead.customer_phone && (
+              <a
+                href={`tel:${lead.customer_phone}`}
+                className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+              >
+                <Phone className="h-3.5 w-3.5" />
+              </a>
+            )}
+            <button
+              type="button"
+              onClick={() => onClick?.()}
+              className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+            >
+              <MessageCircle className="h-3.5 w-3.5" />
+            </button>
+            <LeadStatusMenu lead={lead} isSoldStage={!!isSoldStage} onUpdate={onLeadUpdate} />
+          </div>
+        </div>
       </CardContent>
     </Card>
   );

@@ -1,7 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
+import { api, ApiError } from "@/lib/api";
+import { useAuth } from "@/hooks/useAuth";
 import DashboardLayout from "@/components/DashboardLayout";
+import DashboardStatCard from "@/components/dashboard/DashboardStatCard";
+import LeadsViewTabs, { LeadsViewMode } from "@/components/leads/LeadsViewTabs";
+import LeadsListView from "@/components/leads/LeadsListView";
+import LeadsTableView from "@/components/leads/LeadsTableView";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -10,8 +15,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Plus, Filter, Search, Calendar as CalendarIcon } from "lucide-react";
-import { format } from "date-fns";
+import { Plus, SlidersHorizontal, Search, Calendar as CalendarIcon, Users2, Phone, Target, ShoppingBag, Wallet, RefreshCcw, MoreVertical } from "lucide-react";
+import { format, subDays, parseISO } from "date-fns";
 import { toast } from "sonner";
 import { useUserRoles } from "@/hooks/useUserRoles";
 import { DndContext, DragEndEvent, DragOverlay, DragStartEvent, PointerSensor, useSensor, useSensors, closestCenter } from "@dnd-kit/core";
@@ -22,6 +27,13 @@ import LeadDetailsDialog from "@/components/LeadDetailsDialog";
 import StageManagement from "@/components/StageManagement";
 import SortableStageColumn from "@/components/SortableStageColumn";
 import { StageChangeDialog } from "@/components/StageChangeDialog";
+import { LEAD_SOURCE_OPTIONS } from "@/lib/leadDisplay";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 const LEAD_TYPE_OPTIONS = ["Yangi lid", "Baza"];
 
@@ -35,6 +47,13 @@ const TIME_FILTER_OPTIONS = [
   { value: "yearly", label: "Yillik" },
 ];
 
+// Returns null (not a sentinel 100%) when there's no previous-period baseline
+// to compare against — a "growth rate from zero" isn't a real percentage.
+const pctChange = (current: number, previous: number): number | null => {
+  if (previous === 0) return null;
+  return Math.round(((current - previous) / previous) * 100);
+};
+
 const Leads = () => {
   const [leads, setLeads] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -42,11 +61,13 @@ const Leads = () => {
   const [filterLeadType, setFilterLeadType] = useState<string>("all");
   const [filterTimeRange, setFilterTimeRange] = useState<string>("all");
   const [filterSeller, setFilterSeller] = useState<string>("all");
+  const [filterSource, setFilterSource] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [startDateFilter, setStartDateFilter] = useState<Date | undefined>(undefined);
   const [endDateFilter, setEndDateFilter] = useState<Date | undefined>(undefined);
   const [sellers, setSellers] = useState<any[]>([]);
   const [stages, setStages] = useState<any[]>([]);
+  const [viewMode, setViewMode] = useState<LeadsViewMode>("kanban");
   const { isAdminOrRop } = useUserRoles();
   const [activeLead, setActiveLead] = useState<any>(null);
   const [selectedLead, setSelectedLead] = useState<any>(null);
@@ -60,11 +81,10 @@ const Leads = () => {
     sellerId: string;
   } | null>(null);
 
-  // Exempt stages - direct change allowed without dialog
-  const EXEMPT_STAGE_IDS: string[] = [
-    "ad598efe-b15f-4809-bdf1-4afcdc9abf42", // Sotildi
-  ];
-  
+  // Stages where a drag/select change is applied immediately, without the mandatory comment dialog.
+  // Matched by name since stage ids are generated per-environment.
+  const EXEMPT_STAGE_NAMES = ["Sotildi"];
+
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
@@ -72,11 +92,13 @@ const Leads = () => {
       },
     })
   );
-  
-const MUHIM_STAGE_ID = "1aa6d478-0e36-4642-b5c5-e2a6b6985c08";
-  
-  const [currentUserId, setCurrentUserId] = useState<string>("");
-  
+
+  const { user } = useAuth();
+  const currentUserId = user?.id || "";
+
+  // New leads default to the "Muhim" stage, looked up by name once stages are loaded.
+  const muhimStage = stages.find((s) => s.name === "Muhim");
+
   const [formData, setFormData] = useState({
     customer_name: "",
     customer_phone: "",
@@ -84,7 +106,7 @@ const MUHIM_STAGE_ID = "1aa6d478-0e36-4642-b5c5-e2a6b6985c08";
     lead_type: "Yangi lid",
     activity: "",
     notes: "",
-    stage: MUHIM_STAGE_ID,
+    stage: "",
     source: "",
   });
 
@@ -92,15 +114,13 @@ const MUHIM_STAGE_ID = "1aa6d478-0e36-4642-b5c5-e2a6b6985c08";
     fetchLeads();
     fetchSellers();
     fetchStages();
-    fetchCurrentUser();
   }, []);
 
-  const fetchCurrentUser = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (user) {
-      setCurrentUserId(user.id);
+  useEffect(() => {
+    if (muhimStage && !formData.stage) {
+      setFormData((prev) => ({ ...prev, stage: muhimStage.id }));
     }
-  };
+  }, [muhimStage]);
 
   // Handle opening specific lead from URL parameter
   useEffect(() => {
@@ -119,18 +139,8 @@ const MUHIM_STAGE_ID = "1aa6d478-0e36-4642-b5c5-e2a6b6985c08";
 
   const fetchLeads = async () => {
     try {
-      const { data, error } = await supabase
-        .from("leads")
-        .select(`
-          *,
-          profiles:seller_id (
-            full_name
-          )
-        `)
-        .order("created_at", { ascending: false });
-
-      if (error) throw error;
-      setLeads(data || []);
+      const data = await api.leads.list();
+      setLeads(data.sort((a: any, b: any) => (a.created_at < b.created_at ? 1 : -1)));
     } catch (error) {
       console.error("Error fetching leads:", error);
       toast.error("Lidlarni yuklashda xato");
@@ -141,13 +151,8 @@ const MUHIM_STAGE_ID = "1aa6d478-0e36-4642-b5c5-e2a6b6985c08";
 
   const fetchSellers = async () => {
     try {
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("id, full_name")
-        .order("full_name");
-
-      if (error) throw error;
-      setSellers(data || []);
+      const data = await api.profiles.list();
+      setSellers(data.sort((a: any, b: any) => a.full_name.localeCompare(b.full_name)));
     } catch (error) {
       console.error("Error fetching sellers:", error);
     }
@@ -155,25 +160,26 @@ const MUHIM_STAGE_ID = "1aa6d478-0e36-4642-b5c5-e2a6b6985c08";
 
   const fetchStages = async () => {
     try {
-      const { data, error } = await supabase
-        .from("stages")
-        .select("*")
-        .order("display_order");
-
-      if (error) throw error;
-      setStages(data || []);
+      const data = await api.stages.list();
+      setStages(data.sort((a: any, b: any) => a.display_order - b.display_order));
     } catch (error) {
       console.error("Error fetching stages:", error);
     }
   };
 
+  // Leads enriched with the seller's name, the way the old Supabase embedded select used to shape them.
+  const leadsWithProfiles = leads.map((l) => ({
+    ...l,
+    profiles: { full_name: sellers.find((s) => s.id === l.seller_id)?.full_name },
+  }));
+
   const getFilteredLeads = () => {
-    let filtered = [...leads];
+    let filtered = [...leadsWithProfiles];
 
     // Search filter
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase();
-      filtered = filtered.filter(lead => 
+      filtered = filtered.filter(lead =>
         lead.customer_name?.toLowerCase().includes(query) ||
         lead.customer_phone?.toLowerCase().includes(query) ||
         lead.customer_email?.toLowerCase().includes(query) ||
@@ -186,6 +192,10 @@ const MUHIM_STAGE_ID = "1aa6d478-0e36-4642-b5c5-e2a6b6985c08";
 
     if (filterLeadType !== "all") {
       filtered = filtered.filter(lead => lead.lead_type === filterLeadType);
+    }
+
+    if (filterSource !== "all") {
+      filtered = filtered.filter(lead => lead.source === filterSource);
     }
 
     if (filterTimeRange !== "all") {
@@ -237,41 +247,72 @@ const MUHIM_STAGE_ID = "1aa6d478-0e36-4642-b5c5-e2a6b6985c08";
     return filtered;
   };
 
+  const filteredLeads = useMemo(getFilteredLeads, [
+    leadsWithProfiles,
+    searchQuery,
+    filterLeadType,
+    filterSource,
+    filterTimeRange,
+    startDateFilter,
+    endDateFilter,
+    filterSeller,
+  ]);
+
   const getLeadsByStage = (stage: string) => {
-    return getFilteredLeads().filter(lead => lead.stage === stage);
+    return filteredLeads.filter(lead => lead.stage === stage);
   };
+
+  // --- Summary stats -------------------------------------------------
+  const soldStage = stages.find((s) => s.name === "Sotildi");
+  const firstStage = stages[0];
+  const soldIndex = soldStage ? stages.findIndex((s) => s.id === soldStage.id) : -1;
+  const closeStage = soldIndex > 0 ? stages[soldIndex - 1] : undefined;
+
+  const weekAgo = subDays(new Date(), 7);
+  const twoWeeksAgo = subDays(new Date(), 14);
+  const inLastWeek = (l: any) => {
+    const d = parseISO(l.created_at);
+    return d >= weekAgo;
+  };
+  const inPrevWeek = (l: any) => {
+    const d = parseISO(l.created_at);
+    return d >= twoWeeksAgo && d < weekAgo;
+  };
+
+  const newCount = firstStage ? filteredLeads.filter((l) => l.stage === firstStage.id).length : 0;
+  const closeCount = closeStage ? filteredLeads.filter((l) => l.stage === closeStage.id).length : 0;
+  const soldCount = soldStage ? filteredLeads.filter((l) => l.stage === soldStage.id).length : 0;
+  const potentialRevenue = filteredLeads
+    .filter((l) => l.stage !== soldStage?.id)
+    .reduce((sum, l) => sum + (Number(l.price) || 0), 0);
+
+  const totalTrend = pctChange(filteredLeads.filter(inLastWeek).length, filteredLeads.filter(inPrevWeek).length);
+  const newTrend = pctChange(
+    filteredLeads.filter((l) => l.stage === firstStage?.id && inLastWeek(l)).length,
+    filteredLeads.filter((l) => l.stage === firstStage?.id && inPrevWeek(l)).length,
+  );
+  const closeTrend = pctChange(
+    filteredLeads.filter((l) => l.stage === closeStage?.id && inLastWeek(l)).length,
+    filteredLeads.filter((l) => l.stage === closeStage?.id && inPrevWeek(l)).length,
+  );
+  const soldTrend = pctChange(
+    filteredLeads.filter((l) => l.stage === soldStage?.id && inLastWeek(l)).length,
+    filteredLeads.filter((l) => l.stage === soldStage?.id && inPrevWeek(l)).length,
+  );
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     // For sellers, auto-assign to themselves
     const employeeId = isAdminOrRop ? formData.employee : currentUserId;
-    
+
     if (!employeeId) {
       toast.error("Iltimos, xodimni tanlang");
       return;
     }
 
     try {
-      // Get user's company_id
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        toast.error("Foydalanuvchi topilmadi");
-        return;
-      }
-      
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("company_id")
-        .eq("id", user.id)
-        .single();
-      
-      if (!profile?.company_id) {
-        toast.error("Kompaniya topilmadi");
-        return;
-      }
-
-      const { error } = await supabase.from("leads").insert({
+      await api.leads.create({
         seller_id: employeeId,
         customer_name: formData.customer_name,
         customer_phone: formData.customer_phone,
@@ -281,32 +322,7 @@ const MUHIM_STAGE_ID = "1aa6d478-0e36-4642-b5c5-e2a6b6985c08";
         activity: formData.activity || null,
         stage: formData.stage,
         source: formData.source || null,
-        company_id: profile.company_id,
       });
-
-      if (error) {
-        // Handle duplicate phone error - open existing lead instead
-        if (error.message === "PHONE_ALREADY_EXISTS") {
-          // Find existing lead with this phone
-          const phoneNorm = formData.customer_phone.replace(/\D/g, "");
-          const existingLead = leads.find(
-            (l) => l.customer_phone_norm === phoneNorm
-          );
-          
-          if (existingLead) {
-            toast.info("Bu telefon raqam allaqachon mavjud. Lid ochildi.");
-            setDialogOpen(false);
-            setSelectedLead(existingLead);
-            setDetailsDialogOpen(true);
-          } else {
-            // Lead exists but not in current list - refetch and then open
-            await fetchLeads();
-            toast.info("Bu telefon raqam allaqachon mavjud");
-          }
-          return;
-        }
-        throw error;
-      }
 
       toast.success("Lid muvaffaqiyatli qo'shildi!");
       setDialogOpen(false);
@@ -317,19 +333,24 @@ const MUHIM_STAGE_ID = "1aa6d478-0e36-4642-b5c5-e2a6b6985c08";
         lead_type: "Yangi lid",
         activity: "",
         notes: "",
-        stage: MUHIM_STAGE_ID,
+        stage: muhimStage?.id || "",
         source: "",
       });
       fetchLeads();
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error creating lead:", error);
-      toast.error(error?.message || "Lid qo'shishda xato");
+      toast.error(error instanceof ApiError ? error.message : "Lid qo'shishda xato");
     }
+  };
+
+  const openAddLeadDialog = (stageId?: string) => {
+    setFormData((prev) => ({ ...prev, stage: stageId || muhimStage?.id || prev.stage }));
+    setDialogOpen(true);
   };
 
   const handleStageDragEnd = async (event: DragEndEvent) => {
     const { active, over } = event;
-    
+
     if (!over || active.id === over.id) return;
 
     const oldIndex = stages.findIndex((s) => s.id === active.id);
@@ -346,10 +367,7 @@ const MUHIM_STAGE_ID = "1aa6d478-0e36-4642-b5c5-e2a6b6985c08";
       }));
 
       for (const update of updates) {
-        await supabase
-          .from("stages")
-          .update({ display_order: update.display_order })
-          .eq("id", update.id);
+        await api.stages.update(update.id, { display_order: update.display_order });
       }
 
       toast.success("Bosqichlar tartibi yangilandi!");
@@ -378,16 +396,11 @@ const MUHIM_STAGE_ID = "1aa6d478-0e36-4642-b5c5-e2a6b6985c08";
     if (!lead || lead.stage === newStageId) return;
 
     const newStage = stages.find(s => s.id === newStageId);
-    
-    // Check if exempt stage - direct change allowed
-    if (EXEMPT_STAGE_IDS.includes(newStageId)) {
-      try {
-        const { error } = await supabase
-          .from("leads")
-          .update({ stage: newStageId })
-          .eq("id", leadId);
 
-        if (error) throw error;
+    // Check if exempt stage - direct change allowed
+    if (EXEMPT_STAGE_NAMES.includes(newStage?.name || "")) {
+      try {
+        await api.leads.update(leadId, { stage: newStageId });
 
         toast.success("Lid bosqichi yangilandi!");
         fetchLeads();
@@ -414,14 +427,9 @@ const MUHIM_STAGE_ID = "1aa6d478-0e36-4642-b5c5-e2a6b6985c08";
     const newStage = stages.find(s => s.id === newStageId);
 
     // Check if exempt stage - direct change allowed
-    if (EXEMPT_STAGE_IDS.includes(newStageId)) {
+    if (EXEMPT_STAGE_NAMES.includes(newStage?.name || "")) {
       try {
-        const { error } = await supabase
-          .from("leads")
-          .update({ stage: newStageId })
-          .eq("id", leadId);
-
-        if (error) throw error;
+        await api.leads.update(leadId, { stage: newStageId });
 
         toast.success("Lid bosqichi yangilandi!");
         fetchLeads();
@@ -441,6 +449,8 @@ const MUHIM_STAGE_ID = "1aa6d478-0e36-4642-b5c5-e2a6b6985c08";
     }
   };
 
+  const hasCustomDateFilter = !!startDateFilter || !!endDateFilter;
+
   if (loading) {
     return (
       <DashboardLayout>
@@ -453,25 +463,15 @@ const MUHIM_STAGE_ID = "1aa6d478-0e36-4642-b5c5-e2a6b6985c08";
 
   return (
     <DashboardLayout>
-      <div className="mb-6">
-        <h1 className="text-2xl sm:text-3xl font-bold mb-2">Lidlar Voronkasi</h1>
-        <p className="text-sm sm:text-base text-muted-foreground">Lidlarni boshqarish va kuzatish</p>
-      </div>
+      <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold sm:text-3xl">Lidlar Voronkasi</h1>
+          <p className="text-sm text-muted-foreground sm:text-base">Lidlarni boshqarish va kuzatish</p>
+        </div>
 
-      {/* Search Bar */}
-      <div className="mb-4">
-        <Input
-          placeholder="Qidirish (ism, telefon, email, izoh, faoliyat...)"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          className="w-full sm:max-w-md"
-        />
-      </div>
-
-      <div className="flex gap-4 mb-6 flex-wrap items-center">
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogTrigger asChild>
-            <Button>
+            <Button onClick={() => openAddLeadDialog()}>
               <Plus className="mr-2 h-4 w-4" />
               Yangi lid
             </Button>
@@ -596,10 +596,11 @@ const MUHIM_STAGE_ID = "1aa6d478-0e36-4642-b5c5-e2a6b6985c08";
                       <SelectValue placeholder="Manbani tanlang" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="Sayt">Sayt</SelectItem>
-                      <SelectItem value="Forma">Forma</SelectItem>
-                      <SelectItem value="Instagram">Instagram</SelectItem>
-                      <SelectItem value="Telegram">Telegram</SelectItem>
+                      {LEAD_SOURCE_OPTIONS.map((source) => (
+                        <SelectItem key={source} value={source}>
+                          {source}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
@@ -635,143 +636,280 @@ const MUHIM_STAGE_ID = "1aa6d478-0e36-4642-b5c5-e2a6b6985c08";
             </form>
           </DialogContent>
         </Dialog>
+      </div>
 
-        {isAdminOrRop && (
-          <StageManagement onUpdate={fetchStages} />
-        )}
+      <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+        <DashboardStatCard
+          id="leads-total"
+          title="Jami lidlar"
+          value={String(filteredLeads.length)}
+          description="O'tgan haftaga nisbatan"
+          icon={Users2}
+          iconClassName="bg-blue-500/10 text-blue-600"
+          trend={totalTrend !== null ? { value: totalTrend, isPositive: totalTrend >= 0 } : undefined}
+          sparkline={[]}
+          sparklineColor="#3b82f6"
+        />
+        <DashboardStatCard
+          id="leads-new"
+          title="Yangi lidlar"
+          value={String(newCount)}
+          description={firstStage ? `${firstStage.name} bosqichida` : "Joriy hafta"}
+          icon={Phone}
+          iconClassName="bg-teal-500/10 text-teal-600"
+          trend={newTrend !== null ? { value: newTrend, isPositive: newTrend >= 0 } : undefined}
+          sparkline={[]}
+          sparklineColor="#14b8a6"
+        />
+        <DashboardStatCard
+          id="leads-close"
+          title="Sotuvga yaqin"
+          value={String(closeCount)}
+          description={closeStage ? `${closeStage.name} bosqichida` : "Ma'lumot berildi bosqichida"}
+          icon={Target}
+          iconClassName="bg-rose-500/10 text-rose-600"
+          trend={closeTrend !== null ? { value: closeTrend, isPositive: closeTrend >= 0 } : undefined}
+          sparkline={[]}
+          sparklineColor="#f43f5e"
+        />
+        <DashboardStatCard
+          id="leads-sold"
+          title="Sotilgan"
+          value={String(soldCount)}
+          description="Joriy haftada"
+          icon={ShoppingBag}
+          iconClassName="bg-green-500/10 text-green-600"
+          trend={soldTrend !== null ? { value: soldTrend, isPositive: soldTrend >= 0 } : undefined}
+          sparkline={[]}
+          sparklineColor="#22c55e"
+        />
+        <DashboardStatCard
+          id="leads-potential"
+          title="Potensial daromad"
+          value={`${potentialRevenue.toLocaleString()} so'm`}
+          description="Barcha faol lidlar bo'yicha"
+          icon={Wallet}
+          iconClassName="bg-slate-500/10 text-slate-600"
+          sparkline={[]}
+          sparklineColor="#64748b"
+        />
+      </div>
 
-        <div className="flex gap-2 items-center flex-wrap">
-          <Filter className="h-4 w-4 text-muted-foreground" />
-          
-          <Select value={filterTimeRange} onValueChange={(value) => {
-            setFilterTimeRange(value);
-            if (value !== "all") {
-              setStartDateFilter(undefined);
-              setEndDateFilter(undefined);
-            }
-          }}>
-            <SelectTrigger className="w-[160px]">
-              <SelectValue placeholder="Vaqt bo'yicha" />
-            </SelectTrigger>
-            <SelectContent>
-              {TIME_FILTER_OPTIONS.map((option) => (
-                <SelectItem key={option.value} value={option.value}>
-                  {option.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          <Popover>
-            <PopoverTrigger asChild>
-              <Button variant="outline" className="w-[140px] justify-start text-left font-normal">
-                <CalendarIcon className="mr-2 h-4 w-4" />
-                {startDateFilter ? format(startDateFilter, "dd.MM.yyyy") : "Boshlanish"}
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-auto p-0" align="start">
-              <Calendar
-                mode="single"
-                selected={startDateFilter}
-                onSelect={(date) => {
-                  setStartDateFilter(date);
-                  setFilterTimeRange("all");
-                }}
-                initialFocus
-              />
-            </PopoverContent>
-          </Popover>
-
-          <Popover>
-            <PopoverTrigger asChild>
-              <Button variant="outline" className="w-[140px] justify-start text-left font-normal">
-                <CalendarIcon className="mr-2 h-4 w-4" />
-                {endDateFilter ? format(endDateFilter, "dd.MM.yyyy") : "Tugash"}
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-auto p-0" align="start">
-              <Calendar
-                mode="single"
-                selected={endDateFilter}
-                onSelect={(date) => {
-                  setEndDateFilter(date);
-                  setFilterTimeRange("all");
-                }}
-                initialFocus
-              />
-            </PopoverContent>
-          </Popover>
-
-          {(startDateFilter || endDateFilter) && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                setStartDateFilter(undefined);
-                setEndDateFilter(undefined);
-              }}
-            >
-              Tozalash
-            </Button>
-          )}
-
-          <Select value={filterLeadType} onValueChange={setFilterLeadType}>
-            <SelectTrigger className="w-[160px]">
-              <SelectValue placeholder="Lead turi" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Barcha turlar</SelectItem>
-              {LEAD_TYPE_OPTIONS.map((type) => (
-                <SelectItem key={type} value={type}>
-                  {type}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          {isAdminOrRop && (
-            <Select value={filterSeller} onValueChange={setFilterSeller}>
-              <SelectTrigger className="w-[180px]">
-                <SelectValue placeholder="Xodim bo'yicha" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Barcha xodimlar</SelectItem>
-                {sellers.map((seller) => (
-                  <SelectItem key={seller.id} value={seller.id}>
-                    {seller.full_name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
+      <div className="mb-4">
+        <div className="relative max-w-md">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            placeholder="Mijoz, telefon, email yoki izoh bo'yicha qidirish..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-9"
+          />
         </div>
       </div>
 
-      <DndContext
-        sensors={sensors}
-        collisionDetection={closestCenter}
-        onDragEnd={handleStageDragEnd}
-      >
-        <SortableContext items={stages.map(s => s.id)} strategy={horizontalListSortingStrategy}>
-          <div className="flex gap-4 overflow-x-auto pb-4">
-            {stages.map((stage) => (
-              <SortableStageColumn
-                key={stage.id}
-                stage={stage}
-                leads={getLeadsByStage(stage.id)}
-                onLeadClick={(lead) => {
-                  setSelectedLead(lead);
-                  setDetailsDialogOpen(true);
-                }}
-                stages={stages}
-                onStageChange={handleStageChange}
-                onDragStart={handleDragStart}
-                onDragEnd={handleDragEnd}
-              />
+      <div className="mb-6 flex flex-wrap items-center gap-2">
+        <LeadsViewTabs value={viewMode} onChange={setViewMode} />
+
+        {isAdminOrRop && (
+          <Select value={filterSeller} onValueChange={setFilterSeller}>
+            <SelectTrigger className="h-9 w-[170px]">
+              <SelectValue placeholder="Barcha sotuvchilar" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Barcha sotuvchilar</SelectItem>
+              {sellers.map((seller) => (
+                <SelectItem key={seller.id} value={seller.id}>
+                  {seller.full_name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+
+        <Select value={filterSource} onValueChange={setFilterSource}>
+          <SelectTrigger className="h-9 w-[160px]">
+            <SelectValue placeholder="Barcha manbalar" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Barcha manbalar</SelectItem>
+            {LEAD_SOURCE_OPTIONS.map((source) => (
+              <SelectItem key={source} value={source}>
+                {source}
+              </SelectItem>
             ))}
-          </div>
-        </SortableContext>
-      </DndContext>
+          </SelectContent>
+        </Select>
+
+        <Select value={filterLeadType} onValueChange={setFilterLeadType}>
+          <SelectTrigger className="h-9 w-[150px]">
+            <SelectValue placeholder="Barcha lidlar" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Barcha lidlar</SelectItem>
+            {LEAD_TYPE_OPTIONS.map((type) => (
+              <SelectItem key={type} value={type}>
+                {type}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <Select value={filterTimeRange} onValueChange={(value) => {
+          setFilterTimeRange(value);
+          if (value !== "all") {
+            setStartDateFilter(undefined);
+            setEndDateFilter(undefined);
+          }
+        }}>
+          <SelectTrigger className="h-9 w-[160px]">
+            <SelectValue placeholder="Yaratilgan sana" />
+          </SelectTrigger>
+          <SelectContent>
+            {TIME_FILTER_OPTIONS.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button variant="outline" size="sm" className={`h-9 gap-1.5 ${hasCustomDateFilter ? "border-primary text-primary" : ""}`}>
+              <SlidersHorizontal className="h-3.5 w-3.5" />
+              Filtrlar
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-auto space-y-3 p-4" align="start">
+            <div>
+              <Label className="mb-1.5 block text-xs text-muted-foreground">Boshlanish sanasi</Label>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" size="sm" className="w-full justify-start gap-2 font-normal">
+                    <CalendarIcon className="h-3.5 w-3.5" />
+                    {startDateFilter ? format(startDateFilter, "dd.MM.yyyy") : "Tanlash"}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0" align="start">
+                  <Calendar
+                    mode="single"
+                    selected={startDateFilter}
+                    onSelect={(date) => {
+                      setStartDateFilter(date);
+                      setFilterTimeRange("all");
+                    }}
+                    initialFocus
+                  />
+                </PopoverContent>
+              </Popover>
+            </div>
+
+            <div>
+              <Label className="mb-1.5 block text-xs text-muted-foreground">Tugash sanasi</Label>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" size="sm" className="w-full justify-start gap-2 font-normal">
+                    <CalendarIcon className="h-3.5 w-3.5" />
+                    {endDateFilter ? format(endDateFilter, "dd.MM.yyyy") : "Tanlash"}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0" align="start">
+                  <Calendar
+                    mode="single"
+                    selected={endDateFilter}
+                    onSelect={(date) => {
+                      setEndDateFilter(date);
+                      setFilterTimeRange("all");
+                    }}
+                    initialFocus
+                  />
+                </PopoverContent>
+              </Popover>
+            </div>
+
+            {hasCustomDateFilter && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="w-full"
+                onClick={() => {
+                  setStartDateFilter(undefined);
+                  setEndDateFilter(undefined);
+                }}
+              >
+                Tozalash
+              </Button>
+            )}
+          </PopoverContent>
+        </Popover>
+
+        {isAdminOrRop && <StageManagement onUpdate={fetchStages} />}
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="icon" className="h-9 w-9">
+              <MoreVertical className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={() => fetchLeads()}>
+              <RefreshCcw className="mr-2 h-4 w-4" />
+              Yangilash
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
+      {viewMode === "kanban" && (
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragEnd={handleStageDragEnd}
+        >
+          <SortableContext items={stages.map(s => s.id)} strategy={horizontalListSortingStrategy}>
+            <div className="flex gap-4 overflow-x-auto pb-4">
+              {stages.map((stage) => (
+                <SortableStageColumn
+                  key={stage.id}
+                  stage={stage}
+                  leads={getLeadsByStage(stage.id)}
+                  onLeadClick={(lead) => {
+                    setSelectedLead(lead);
+                    setDetailsDialogOpen(true);
+                  }}
+                  stages={stages}
+                  onStageChange={handleStageChange}
+                  onDragStart={handleDragStart}
+                  onDragEnd={handleDragEnd}
+                  onAddLead={openAddLeadDialog}
+                />
+              ))}
+            </div>
+          </SortableContext>
+        </DndContext>
+      )}
+
+      {viewMode === "list" && (
+        <LeadsListView
+          leads={filteredLeads}
+          stages={stages}
+          onLeadClick={(lead) => {
+            setSelectedLead(lead);
+            setDetailsDialogOpen(true);
+          }}
+        />
+      )}
+
+      {viewMode === "table" && (
+        <LeadsTableView
+          leads={filteredLeads}
+          stages={stages}
+          onLeadClick={(lead) => {
+            setSelectedLead(lead);
+            setDetailsDialogOpen(true);
+          }}
+        />
+      )}
 
       {selectedLead && (
         <LeadDetailsDialog

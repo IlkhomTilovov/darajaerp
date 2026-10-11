@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { api, ApiError } from "@/lib/api";
 import DashboardLayout from "@/components/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -55,33 +55,33 @@ const Inventory = () => {
   const fetchInventoryStats = async () => {
     try {
       setLoading(true);
-      const { data: productsData, error: productsError } = await supabase.from("products").select("*").order("name");
-      if (productsError) throw productsError;
+      const [productsData, ordersData] = await Promise.all([api.products.list(), api.orders.list()]);
 
-      const { data: ordersData, error: ordersError } = await supabase.from("orders").select("id, order_date, status")
-        .gte("order_date", format(startDate, "yyyy-MM-dd")).lte("order_date", format(endDate, "yyyy-MM-dd")).neq("status", "cancelled");
-      if (ordersError) throw ordersError;
+      const startStr = format(startDate, "yyyy-MM-dd");
+      const endStr = format(endDate, "yyyy-MM-dd");
+      const ordersInRange = ordersData.filter(
+        (o: any) => o.status !== "cancelled" && o.order_date >= startStr && o.order_date <= endStr,
+      );
+      const orderItems = ordersInRange.flatMap((o: any) => o.order_items || []);
 
-      const orderIds = ordersData?.map(o => o.id) || [];
-      let orderItems: any[] = [];
-      if (orderIds.length > 0) {
-        const { data: itemsData, error: itemsError } = await supabase.from("order_items").select("*").in("order_id", orderIds);
-        if (itemsError) throw itemsError;
-        orderItems = itemsData || [];
-      }
-
-      const productStats: ProductStats[] = (productsData || []).map(product => {
-        const productItems = orderItems.filter(item => item.product_name.toLowerCase() === product.name.toLowerCase());
-        return {
-          id: product.id, name: product.name, category: product.category, price: product.price, stock: product.stock || 0,
-          totalSold: productItems.reduce((sum, item) => sum + item.quantity, 0),
-          totalRevenue: productItems.reduce((sum, item) => sum + (item.price * item.quantity), 0),
-        };
-      });
+      const productStats: ProductStats[] = productsData
+        .sort((a: any, b: any) => a.name.localeCompare(b.name))
+        .map((product: any) => {
+          const productItems = orderItems.filter((item: any) => item.product_name.toLowerCase() === product.name.toLowerCase());
+          return {
+            id: product.id,
+            name: product.name,
+            category: product.category,
+            price: Number(product.price),
+            stock: product.stock || 0,
+            totalSold: productItems.reduce((sum: number, item: any) => sum + item.quantity, 0),
+            totalRevenue: productItems.reduce((sum: number, item: any) => sum + Number(item.price) * item.quantity, 0),
+          };
+        });
       productStats.sort((a, b) => b.totalSold - a.totalSold);
       setProducts(productStats);
       setChartData(productStats.slice(0, 10).map(p => ({ name: p.name.length > 15 ? p.name.substring(0, 15) + '...' : p.name, sotilgan: p.totalSold })));
-    } catch (error: any) {
+    } catch (error) {
       toast.error("Ma'lumotlarni yuklashda xatolik");
     } finally {
       setLoading(false);
@@ -98,14 +98,13 @@ const Inventory = () => {
   const handleStockAdjustment = async () => {
     if (!selectedProduct) return;
     try {
-      let newStock = adjustmentType === 'add' ? selectedProduct.stock + stockAdjustment : adjustmentType === 'subtract' ? Math.max(0, selectedProduct.stock - stockAdjustment) : Math.max(0, stockAdjustment);
-      const { error } = await supabase.from('products').update({ stock: newStock }).eq('id', selectedProduct.id);
-      if (error) throw error;
+      const newStock = adjustmentType === 'add' ? selectedProduct.stock + stockAdjustment : adjustmentType === 'subtract' ? Math.max(0, selectedProduct.stock - stockAdjustment) : Math.max(0, stockAdjustment);
+      await api.products.update(selectedProduct.id, { stock: newStock });
       toast.success(`${selectedProduct.name} zaxirasi: ${newStock} ta`);
       setStockDialogOpen(false);
       fetchInventoryStats();
-    } catch (error: any) {
-      toast.error('Xatolik: ' + error.message);
+    } catch (error) {
+      toast.error('Xatolik: ' + (error instanceof ApiError ? error.message : ''));
     }
   };
 

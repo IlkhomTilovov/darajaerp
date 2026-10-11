@@ -13,38 +13,45 @@ import Profile from "./pages/Profile";
 import Admin from "./pages/Admin";
 import Tasks from "./pages/Tasks";
 import Sellers from "./pages/Sellers";
+import EmployeeDetail from "./pages/EmployeeDetail";
 import Statistics from "./pages/Statistics";
 import Inventory from "./pages/Inventory";
+import DeliveryKanban from "./pages/delivery/DeliveryKanban";
 import NotFound from "./pages/NotFound";
 import { OrderStatusNotificationProvider } from "./components/OrderStatusNotificationProvider";
+import { AuthProvider } from "./hooks/useAuth";
 
 const queryClient = new QueryClient();
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
-    <TooltipProvider>
-      <Toaster />
-      <Sonner />
-      <OrderStatusNotificationProvider>
-        <BrowserRouter>
-          <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/auth" element={<Auth />} />
-            <Route path="/leads" element={<Leads />} />
-            <Route path="/products" element={<Products />} />
-            <Route path="/all-orders" element={<AllOrders />} />
-            <Route path="/profile" element={<Profile />} />
-            <Route path="/admin" element={<Admin />} />
-            <Route path="/tasks" element={<Tasks />} />
-            <Route path="/sellers" element={<Sellers />} />
-            <Route path="/statistics" element={<Statistics />} />
-            <Route path="/inventory" element={<Inventory />} />
-            {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </BrowserRouter>
-      </OrderStatusNotificationProvider>
-    </TooltipProvider>
+    <AuthProvider>
+      <TooltipProvider>
+        <Toaster />
+        <Sonner />
+        <OrderStatusNotificationProvider>
+          <BrowserRouter>
+            <Routes>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/auth" element={<Auth />} />
+              <Route path="/leads" element={<Leads />} />
+              <Route path="/products" element={<Products />} />
+              <Route path="/all-orders" element={<AllOrders />} />
+              <Route path="/profile" element={<Profile />} />
+              <Route path="/admin" element={<Admin />} />
+              <Route path="/tasks" element={<Tasks />} />
+              <Route path="/sellers" element={<Sellers />} />
+              <Route path="/sellers/:id" element={<EmployeeDetail />} />
+              <Route path="/statistics" element={<Statistics />} />
+              <Route path="/inventory" element={<Inventory />} />
+              <Route path="/delivery" element={<DeliveryKanban />} />
+              {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </BrowserRouter>
+        </OrderStatusNotificationProvider>
+      </TooltipProvider>
+    </AuthProvider>
   </QueryClientProvider>
 );
 

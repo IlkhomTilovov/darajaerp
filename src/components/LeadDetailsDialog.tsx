@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { supabase } from "@/integrations/supabase/client";
+import { api, ApiError } from "@/lib/api";
 import { toast } from "sonner";
 import { useUserRoles } from "@/hooks/useUserRoles";
 import { format } from "date-fns";
@@ -30,7 +30,7 @@ const DELIVERY_STATUS_OPTIONS = [
 ];
 
 const LeadDetailsDialog = ({ lead, open, onOpenChange, onUpdate, sellers, stages }: LeadDetailsDialogProps) => {
-  const { isAdminOrRop, isAdmin } = useUserRoles();
+  const { isAdminOrRop } = useUserRoles();
   const [tasks, setTasks] = useState<any[]>([]);
   const [comments, setComments] = useState<any[]>([]);
   const [newComment, setNewComment] = useState("");
@@ -47,6 +47,8 @@ const LeadDetailsDialog = ({ lead, open, onOpenChange, onUpdate, sellers, stages
     showForm: false
   });
 
+  const sellerName = (id: string) => sellers.find((s) => s.id === id)?.full_name || "Foydalanuvchi";
+
   useEffect(() => {
     if (open && lead) {
       fetchTasks();
@@ -61,14 +63,11 @@ const LeadDetailsDialog = ({ lead, open, onOpenChange, onUpdate, sellers, stages
 
   const fetchTasks = async () => {
     try {
-      const { data, error } = await supabase
-        .from("tasks")
-        .select("*")
-        .eq("lead_id", lead.id)
-        .order("created_at", { ascending: false });
-
-      if (error) throw error;
-      setTasks(data || []);
+      const all = await api.tasks.list();
+      const leadTasks = all
+        .filter((t: any) => t.lead_id === lead.id)
+        .sort((a: any, b: any) => (a.created_at < b.created_at ? 1 : -1));
+      setTasks(leadTasks);
     } catch (error) {
       console.error("Error fetching tasks:", error);
     }
@@ -76,17 +75,8 @@ const LeadDetailsDialog = ({ lead, open, onOpenChange, onUpdate, sellers, stages
 
   const fetchComments = async () => {
     try {
-      const { data, error } = await supabase
-        .from("lead_comments")
-        .select(`
-          *,
-          profiles:user_id (full_name)
-        `)
-        .eq("lead_id", lead.id)
-        .order("created_at", { ascending: false });
-
-      if (error) throw error;
-      setComments(data || []);
+      const data = await api.leads.comments.list(lead.id);
+      setComments(data.map((c: any) => ({ ...c, profiles: { full_name: sellerName(c.user_id) } })));
     } catch (error) {
       console.error("Error fetching comments:", error);
     }
@@ -99,52 +89,25 @@ const LeadDetailsDialog = ({ lead, open, onOpenChange, onUpdate, sellers, stages
     }
 
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) throw new Error("User not found");
-
-      // Get user's company_id (required by backend security policies)
-      const { data: profile, error: profileError } = await supabase
-        .from("profiles")
-        .select("company_id")
-        .eq("id", user.id)
-        .maybeSingle();
-
-      if (profileError) throw profileError;
-
-      const companyId = profile?.company_id ?? lead?.company_id;
-      if (!companyId) throw new Error("Kompaniya topilmadi");
-
-      // Combine date and time
       const [hours, minutes] = taskForm.due_time.split(":");
       const dueDateTime = new Date(taskForm.due_date);
       dueDateTime.setHours(parseInt(hours), parseInt(minutes));
 
-      const { error } = await supabase.from("tasks").insert({
+      await api.tasks.create({
         title: taskForm.title.trim(),
         description: taskForm.description?.trim() || null,
         due_date: dueDateTime.toISOString(),
         seller_id: lead.seller_id,
         lead_id: lead.id,
         status: "pending",
-        company_id: companyId,
       });
-
-      if (error) throw error;
 
       toast.success("Vazifa qo'shildi");
-      setTaskForm({
-        title: "",
-        description: "",
-        due_date: new Date(),
-        due_time: "12:00",
-        showForm: false,
-      });
+      setTaskForm({ title: "", description: "", due_date: new Date(), due_time: "12:00", showForm: false });
       fetchTasks();
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error adding task:", error);
-      toast.error(error?.message || "Vazifa qo'shishda xato");
+      toast.error(error instanceof ApiError ? error.message : "Vazifa qo'shishda xato");
     }
   };
 
@@ -152,17 +115,7 @@ const LeadDetailsDialog = ({ lead, open, onOpenChange, onUpdate, sellers, stages
     if (!newComment.trim()) return;
 
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error("User not found");
-
-      const { error } = await supabase.from("lead_comments").insert({
-        lead_id: lead.id,
-        user_id: user.id,
-        comment: newComment
-      });
-
-      if (error) throw error;
-
+      await api.leads.comments.create(lead.id, newComment);
       toast.success("Izoh qo'shildi");
       setNewComment("");
       fetchComments();
@@ -176,26 +129,8 @@ const LeadDetailsDialog = ({ lead, open, onOpenChange, onUpdate, sellers, stages
     if (!isAdminOrRop || selectedSeller === lead.seller_id) return;
 
     try {
-      const seller = sellers.find(s => s.id === selectedSeller);
-      
-      // Update lead seller
-      const { error: leadError } = await supabase
-        .from("leads")
-        .update({ 
-          seller_id: selectedSeller,
-          employee: seller?.full_name || ""
-        })
-        .eq("id", lead.id);
-
-      if (leadError) throw leadError;
-
-      // Transfer all tasks to new seller
-      const { error: tasksError } = await supabase
-        .from("tasks")
-        .update({ seller_id: selectedSeller })
-        .eq("lead_id", lead.id);
-
-      if (tasksError) throw tasksError;
+      await api.leads.update(lead.id, { seller_id: selectedSeller, employee: sellerName(selectedSeller) });
+      await Promise.all(tasks.map((t) => api.tasks.update(t.id, { seller_id: selectedSeller })));
 
       toast.success("Xodim, vazifalar va izohlar o'zgartirildi");
       onUpdate();
@@ -214,13 +149,7 @@ const LeadDetailsDialog = ({ lead, open, onOpenChange, onUpdate, sellers, stages
     }
 
     try {
-      const { error } = await supabase
-        .from("leads")
-        .update({ price: price ? parseFloat(price) : null })
-        .eq("id", lead.id);
-
-      if (error) throw error;
-
+      await api.leads.update(lead.id, { price: price ? parseFloat(price) : null });
       toast.success("Narx saqlandi");
       onUpdate();
     } catch (error) {
@@ -231,13 +160,7 @@ const LeadDetailsDialog = ({ lead, open, onOpenChange, onUpdate, sellers, stages
 
   const handleUpdateNotes = async () => {
     try {
-      const { error } = await supabase
-        .from("leads")
-        .update({ notes: notes })
-        .eq("id", lead.id);
-
-      if (error) throw error;
-
+      await api.leads.update(lead.id, { notes });
       toast.success("Izoh saqlandi");
       onUpdate();
     } catch (error) {
@@ -248,13 +171,7 @@ const LeadDetailsDialog = ({ lead, open, onOpenChange, onUpdate, sellers, stages
 
   const handleUpdateDeliveryStatus = async (newStatus: string) => {
     try {
-      const { error } = await supabase
-        .from("leads")
-        .update({ delivery_status: newStatus })
-        .eq("id", lead.id);
-
-      if (error) throw error;
-
+      await api.leads.update(lead.id, { delivery_status: newStatus });
       setDeliveryStatus(newStatus);
       toast.success("Yetkazish holati saqlandi");
       onUpdate();
@@ -266,15 +183,9 @@ const LeadDetailsDialog = ({ lead, open, onOpenChange, onUpdate, sellers, stages
 
   const handleToggleTask = async (taskId: string, currentStatus: string) => {
     const newStatus = currentStatus === "completed" ? "pending" : "completed";
-    
+
     try {
-      const { error } = await supabase
-        .from("tasks")
-        .update({ status: newStatus })
-        .eq("id", taskId);
-
-      if (error) throw error;
-
+      await api.tasks.update(taskId, { status: newStatus });
       toast.success(newStatus === "completed" ? "Vazifa bajarildi" : "Vazifa qayta ochildi");
       fetchTasks();
     } catch (error) {
@@ -287,31 +198,19 @@ const LeadDetailsDialog = ({ lead, open, onOpenChange, onUpdate, sellers, stages
     if (!confirm("Haqiqatan ham bu lidni o'chirmoqchimisiz?")) return;
 
     try {
-      const { error } = await supabase
-        .from("leads")
-        .delete()
-        .eq("id", lead.id);
-
-      if (error) throw error;
-
+      await api.leads.remove(lead.id);
       toast.success("Lid muvaffaqiyatli o'chirildi");
       onOpenChange(false);
       onUpdate();
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error deleting lead:", error);
-      toast.error("Lidni o'chirishda xato: " + error.message);
+      toast.error("Lidni o'chirishda xato: " + (error instanceof ApiError ? error.message : ""));
     }
   };
 
   const handleUpdateStage = async (newStageId: string) => {
     try {
-      const { error } = await supabase
-        .from("leads")
-        .update({ stage: newStageId })
-        .eq("id", lead.id);
-
-      if (error) throw error;
-
+      await api.leads.update(lead.id, { stage: newStageId });
       setSelectedStage(newStageId);
       toast.success("Bosqich o'zgartirildi");
       onUpdate();
@@ -355,8 +254,8 @@ const LeadDetailsDialog = ({ lead, open, onOpenChange, onUpdate, sellers, stages
               </Select>
             </div>
             {isAdminOrRop && (
-              <Button 
-                variant="destructive" 
+              <Button
+                variant="destructive"
                 size="sm"
                 onClick={handleDeleteLead}
               >
@@ -402,7 +301,7 @@ const LeadDetailsDialog = ({ lead, open, onOpenChange, onUpdate, sellers, stages
               </div>
               <div className="flex items-center gap-2 text-sm">
                 <User className="h-4 w-4 text-muted-foreground" />
-                <span>{lead?.profiles?.full_name || "—"}</span>
+                <span>{sellerName(lead?.seller_id) || "—"}</span>
               </div>
               {lead?.activity && (
                 <div className="flex items-center gap-2 text-sm">
