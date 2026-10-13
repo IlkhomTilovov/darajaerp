@@ -90,6 +90,16 @@ async function fetchLeadDetails(leadgenId: string, pageToken: string) {
 
 const normalizePhone = (raw?: string | null) => (raw ? raw.replace(/\D/g, "") || null : null);
 
+/**
+ * Maxsus savollar uchun Meta ko'pincha savol matnini (va ba'zan tanlangan
+ * javobni ham) pastki chiziqlar bilan "slug" ko'rinishida yuboradi, masalan
+ * "qanday_lavozimda_ishlaysiz?". Buni o'qish mumkin matnga aylantiramiz.
+ */
+const humanize = (raw: string) => {
+  const text = raw.replace(/_/g, " ").trim();
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : text;
+};
+
 function pickFields(fieldData: FieldDatum[]) {
   const get = (...names: string[]) => {
     for (const n of names) {
@@ -111,7 +121,7 @@ function pickFields(fieldData: FieldDatum[]) {
   ]);
   const extras = fieldData
     .filter((f) => !known.has(f.name?.toLowerCase()))
-    .map((f) => `${f.name}: ${(f.values || []).join(", ")}`);
+    .map((f) => `${humanize(f.name)}: ${(f.values || []).map(humanize).join(", ")}`);
 
   return {
     name,
