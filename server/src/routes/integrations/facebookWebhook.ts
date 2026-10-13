@@ -1,6 +1,6 @@
 import { Router } from "express";
 import crypto from "node:crypto";
-import { asc, inArray, sql } from "drizzle-orm";
+import { asc, eq, inArray } from "drizzle-orm";
 import { db, schema } from "../../db/index.js";
 
 const router = Router();
@@ -131,21 +131,12 @@ function pickFields(fieldData: FieldDatum[]) {
   };
 }
 
-const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-/**
- * Shu leadgen_id avval saqlanganmi? (Meta webhook'ni bir necha marta yuboradi)
- * Oddiy LIKE '%Lead ID: 123%' ishlatilsa, "123" ID'si allaqachon saqlangan
- * "1234" ID'siga mos kelib qoladi (substring xatosi) — shuning uchun qator
- * boshida va ID'dan keyin qator tugashi/yangi qatorni talab qiladigan regex
- * ishlatiladi.
- */
+/** Shu leadgen_id avval saqlanganmi? (Meta webhook'ni bir necha marta yuboradi) */
 async function alreadySaved(leadgenId: string) {
-  const pattern = `^Lead ID: ${escapeRegex(leadgenId)}($|\\n)`;
   const rows = await db
     .select({ id: schema.leads.id })
     .from(schema.leads)
-    .where(sql`${schema.leads.notes} ~ ${pattern}`)
+    .where(eq(schema.leads.facebookLeadId, leadgenId))
     .limit(1);
   return rows.length > 0;
 }
@@ -197,9 +188,9 @@ async function handleLeadgen(value: { leadgen_id: string; page_id?: string; form
   let name = "Facebook Lead";
   let phone: string | null = null;
   let email: string | null = null;
-  const noteLines = [`Lead ID: ${leadgenId}`];
-  if (value.form_id) noteLines.push(`Form ID: ${value.form_id}`);
-  if (value.ad_id) noteLines.push(`Ad ID: ${value.ad_id}`);
+  // Faqat mijozning o'zi yozgan javoblar - Lead/Form/Ad ID kabi texnik
+  // ma'lumotlar bu yerga yozilmaydi, ular facebookLeadId ustunida saqlanadi.
+  const noteLines: string[] = [];
 
   if (!pageToken) {
     noteLines.push("⚠️ Page access token sozlanmagan — ism/telefon olinmadi");
@@ -211,7 +202,7 @@ async function handleLeadgen(value: { leadgen_id: string; page_id?: string; form
       if (picked.name) name = picked.name;
       phone = picked.phone;
       email = picked.email;
-      if (picked.extras.length) noteLines.push("", ...picked.extras);
+      noteLines.push(...picked.extras);
     } catch (err) {
       noteLines.push(`⚠️ Graph API xatosi: ${(err as Error).message}`);
       console.error("[facebook] lid ma'lumotini olishda xato:", err);
@@ -227,7 +218,8 @@ async function handleLeadgen(value: { leadgen_id: string; page_id?: string; form
     leadType: "Yangi lid",
     activity: "new",
     source: "Facebook",
-    notes: noteLines.join("\n"),
+    facebookLeadId: leadgenId,
+    notes: noteLines.length ? noteLines.join("\n") : null,
     status: "new",
     ...(stageId ? { stage: stageId } : {}),
   });
