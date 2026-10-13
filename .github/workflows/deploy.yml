@@ -1,0 +1,52 @@
+name: Deploy to VPS
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Sync frontend build
+        run: |
+          rsync -az --delete -e "ssh -i ~/.ssh/deploy_key" \
+            dist/ "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/opt/daraja-erp/frontend/"
+
+      - name: Sync backend source
+        run: |
+          rsync -az --delete \
+            --exclude 'node_modules' --exclude 'dist' --exclude '.env' --exclude 'uploads' \
+            -e "ssh -i ~/.ssh/deploy_key" \
+            server/ "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/opt/daraja-erp/server/"
+
+      - name: Install deps, build & restart backend
+        run: |
+          ssh -i ~/.ssh/deploy_key "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" '
+            set -e
+            cd /opt/daraja-erp/server
+            npm ci
+            npm run build
+            pm2 describe daraja-erp-api > /dev/null 2>&1 && pm2 restart daraja-erp-api --update-env || pm2 start dist/index.js --name daraja-erp-api --cwd /opt/daraja-erp/server
+            pm2 save
+          '
