@@ -119,15 +119,18 @@ function pickFields(fieldData: FieldDatum[]) {
     "full_name", "full name", "name", "first_name", "first name", "last_name", "last name",
     "phone_number", "phone number", "phone", "email",
   ]);
-  const extras = fieldData
+  const formAnswers = fieldData
     .filter((f) => !known.has(f.name?.toLowerCase()))
-    .map((f) => `${humanize(f.name)}: ${(f.values || []).map(humanize).join(", ")}`);
+    .map((f) => ({
+      question: humanize(f.name),
+      answer: (f.values || []).map(humanize).join(", "),
+    }));
 
   return {
     name,
     phone: get("phone_number", "phone number", "phone") || null,
     email: get("email") || null,
-    extras,
+    formAnswers,
   };
 }
 
@@ -188,9 +191,10 @@ async function handleLeadgen(value: { leadgen_id: string; page_id?: string; form
   let name = "Facebook Lead";
   let phone: string | null = null;
   let email: string | null = null;
-  // Faqat mijozning o'zi yozgan javoblar - Lead/Form/Ad ID kabi texnik
-  // ma'lumotlar bu yerga yozilmaydi, ular facebookLeadId ustunida saqlanadi.
+  // Izoh faqat tizim ogohlantirishlari uchun - mijozning o'zi yozgan javoblar
+  // formAnswers'ga (key/value) tushadi va Facebook Ads kartochkasida ko'rsatiladi.
   const noteLines: string[] = [];
+  let formAnswers: { question: string; answer: string }[] = [];
 
   if (!pageToken) {
     noteLines.push("⚠️ Page access token sozlanmagan — ism/telefon olinmadi");
@@ -202,7 +206,7 @@ async function handleLeadgen(value: { leadgen_id: string; page_id?: string; form
       if (picked.name) name = picked.name;
       phone = picked.phone;
       email = picked.email;
-      noteLines.push(...picked.extras);
+      formAnswers = picked.formAnswers;
     } catch (err) {
       noteLines.push(`⚠️ Graph API xatosi: ${(err as Error).message}`);
       console.error("[facebook] lid ma'lumotini olishda xato:", err);
@@ -219,6 +223,7 @@ async function handleLeadgen(value: { leadgen_id: string; page_id?: string; form
     activity: "new",
     source: "Facebook",
     facebookLeadId: leadgenId,
+    facebookFormAnswers: formAnswers.length ? formAnswers : null,
     notes: noteLines.length ? noteLines.join("\n") : null,
     status: "new",
     ...(stageId ? { stage: stageId } : {}),

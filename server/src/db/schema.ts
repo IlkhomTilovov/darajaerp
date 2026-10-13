@@ -92,6 +92,7 @@ export const leads = pgTable("leads", {
   stage: text("stage").default("yengi_mijoz"),
   notes: text("notes"),
   facebookLeadId: text("facebook_lead_id").unique(),
+  facebookFormAnswers: jsonb("facebook_form_answers"),
   activity: text("activity"),
   employee: text("employee"),
   leadType: text("lead_type"),

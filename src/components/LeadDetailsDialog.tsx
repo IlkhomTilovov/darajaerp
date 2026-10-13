@@ -339,6 +339,16 @@ const LeadDetailsDialog = ({ lead, open, onOpenChange, onUpdate, sellers, stages
               {lead?.source && (
                 <p className="text-xs text-muted-foreground mt-1">Manba: {lead.source}</p>
               )}
+              {Array.isArray(lead?.facebook_form_answers) && lead.facebook_form_answers.length > 0 && (
+                <div className="mt-3 space-y-2 border-t border-blue-200 pt-3 dark:border-blue-800">
+                  {lead.facebook_form_answers.map((item: { question: string; answer: string }, index: number) => (
+                    <div key={index} className="text-sm">
+                      <p className="text-blue-900/70 dark:text-blue-100/70">{item.question}</p>
+                      <p className="font-medium text-blue-900 dark:text-blue-100">{item.answer}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
