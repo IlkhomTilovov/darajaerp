@@ -17,6 +17,7 @@ import EmployeeDetail from "./pages/EmployeeDetail";
 import Statistics from "./pages/Statistics";
 import Inventory from "./pages/Inventory";
 import DeliveryKanban from "./pages/delivery/DeliveryKanban";
+import Privacy from "./pages/Privacy";
 import NotFound from "./pages/NotFound";
 import { OrderStatusNotificationProvider } from "./components/OrderStatusNotificationProvider";
 import { AuthProvider } from "./hooks/useAuth";
@@ -45,6 +46,8 @@ const App = () => (
               <Route path="/statistics" element={<Statistics />} />
               <Route path="/inventory" element={<Inventory />} />
               <Route path="/delivery" element={<DeliveryKanban />} />
+              {/* Ommaviy sahifa: Meta ilovasini nashr qilish uchun kerak, login talab qilmaydi */}
+              <Route path="/privacy" element={<Privacy />} />
               {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
               <Route path="*" element={<NotFound />} />
             </Routes>
