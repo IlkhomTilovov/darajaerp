@@ -26,7 +26,14 @@ import { scheduleDailySalesReport } from "./jobs/dailySalesReport.js";
 const app = express();
 
 app.use(cors({ origin: process.env.CORS_ORIGIN || "http://localhost:8080" }));
-app.use(express.json());
+app.use(
+  express.json({
+    // Facebook webhook imzosini (X-Hub-Signature-256) tekshirish uchun xom body kerak.
+    verify: (req, _res, buf) => {
+      (req as express.Request & { rawBody?: Buffer }).rawBody = buf;
+    },
+  }),
+);
 app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 
 // The frontend was originally written against Supabase's snake_case column names.

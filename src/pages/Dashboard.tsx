@@ -92,6 +92,7 @@ const pctChange = (current: number, previous: number): number | null => {
 
 const LEAD_SOURCE_COLORS: Record<string, string> = {
   Instagram: "#ec4899",
+  Facebook: "#2563eb",
   Sayt: "#3b82f6",
   Telegram: "#0ea5e9",
   Forma: "#8b5cf6",
@@ -250,10 +251,10 @@ const Dashboard = () => {
   const leadSourceSlices: DonutSlice[] = useMemo(() => {
     const counts = new Map<string, number>();
     for (const lead of currentLeads) {
-      const key = ["Sayt", "Instagram", "Telegram", "Forma"].includes(lead.source) ? lead.source : "Boshqa";
+      const key = ["Sayt", "Instagram", "Facebook", "Telegram", "Forma"].includes(lead.source) ? lead.source : "Boshqa";
       counts.set(key, (counts.get(key) ?? 0) + 1);
     }
-    return ["Instagram", "Sayt", "Telegram", "Forma", "Boshqa"]
+    return ["Instagram", "Facebook", "Sayt", "Telegram", "Forma", "Boshqa"]
       .filter((label) => label !== "Boshqa" || (counts.get("Boshqa") ?? 0) > 0)
       .map((label) => ({ label, value: counts.get(label) ?? 0, color: LEAD_SOURCE_COLORS[label] }));
   }, [currentLeads]);
