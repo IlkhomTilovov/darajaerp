@@ -1,6 +1,6 @@
 import { Router } from "express";
 import crypto from "node:crypto";
-import { inArray, sql } from "drizzle-orm";
+import { asc, inArray, sql } from "drizzle-orm";
 import { db, schema } from "../../db/index.js";
 
 const router = Router();
@@ -149,6 +149,21 @@ async function resolveSellerId(): Promise<string | null> {
   return rows[0]?.userId ?? null;
 }
 
+/**
+ * Kanban lidlarni leads.stage (stages.id UUID) bo'yicha guruhlaydi. Schema'dagi
+ * matnli standart qiymat ("yengi_mijoz") hech qaysi stage UUID'iga mos kelmaydi,
+ * shuning uchun birinchi bosqich aniq belgilanadi — aks holda lid bazada bor,
+ * lekin kanban ustunlarining birortasida ko'rinmaydi.
+ */
+async function resolveFirstStageId(): Promise<string | null> {
+  const rows = await db
+    .select({ id: schema.stages.id })
+    .from(schema.stages)
+    .orderBy(asc(schema.stages.displayOrder))
+    .limit(1);
+  return rows[0]?.id ?? null;
+}
+
 async function handleLeadgen(value: { leadgen_id: string; page_id?: string; form_id?: string; ad_id?: string }) {
   const leadgenId = String(value.leadgen_id);
 
@@ -164,6 +179,10 @@ async function handleLeadgen(value: { leadgen_id: string; page_id?: string; form
   }
 
   const pageToken = resolvePageToken(value.page_id);
+  const stageId = await resolveFirstStageId();
+  if (!stageId) {
+    console.error("[facebook] birorta stage topilmadi — lid kanbanda ko'rinmasligi mumkin");
+  }
 
   let name = "Facebook Lead";
   let phone: string | null = null;
@@ -200,6 +219,7 @@ async function handleLeadgen(value: { leadgen_id: string; page_id?: string; form
     source: "Facebook",
     notes: noteLines.join("\n"),
     status: "new",
+    ...(stageId ? { stage: stageId } : {}),
   });
 
   console.log(`[facebook] yangi lid saqlandi: ${leadgenId} (${name})`);
