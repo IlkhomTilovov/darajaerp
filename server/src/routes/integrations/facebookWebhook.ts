@@ -69,7 +69,7 @@ type FieldDatum = { name: string; values?: string[] };
 async function fetchLeadDetails(leadgenId: string, pageToken: string) {
   const url =
     `https://graph.facebook.com/${GRAPH_VERSION}/${encodeURIComponent(leadgenId)}` +
-    `?fields=id,created_time,field_data,form_id,ad_id,campaign_id` +
+    `?fields=id,created_time,field_data,form_id,ad_id,campaign_id,platform` +
     `&access_token=${encodeURIComponent(pageToken)}`;
 
   const res = await fetch(url);
@@ -80,6 +80,7 @@ async function fetchLeadDetails(leadgenId: string, pageToken: string) {
     form_id?: string;
     ad_id?: string;
     campaign_id?: string;
+    platform?: string;
   };
 
   if (!res.ok || json.error) {
@@ -191,6 +192,7 @@ async function handleLeadgen(value: { leadgen_id: string; page_id?: string; form
   let name = "Facebook Lead";
   let phone: string | null = null;
   let email: string | null = null;
+  let source = "Facebook";
   // Izoh faqat tizim ogohlantirishlari uchun - mijozning o'zi yozgan javoblar
   // formAnswers'ga (key/value) tushadi va Facebook Ads kartochkasida ko'rsatiladi.
   const noteLines: string[] = [];
@@ -207,6 +209,7 @@ async function handleLeadgen(value: { leadgen_id: string; page_id?: string; form
       phone = picked.phone;
       email = picked.email;
       formAnswers = picked.formAnswers;
+      if (/instagram|^ig$/i.test(details.platform || "")) source = "Instagram";
     } catch (err) {
       noteLines.push(`⚠️ Graph API xatosi: ${(err as Error).message}`);
       console.error("[facebook] lid ma'lumotini olishda xato:", err);
@@ -221,7 +224,7 @@ async function handleLeadgen(value: { leadgen_id: string; page_id?: string; form
     customerEmail: email,
     leadType: "Yangi lid",
     activity: "new",
-    source: "Facebook",
+    source,
     facebookLeadId: leadgenId,
     facebookFormAnswers: formAnswers.length ? formAnswers : null,
     notes: noteLines.length ? noteLines.join("\n") : null,

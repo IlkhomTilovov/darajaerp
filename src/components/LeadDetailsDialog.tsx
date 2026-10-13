@@ -326,15 +326,15 @@ const LeadDetailsDialog = ({ lead, open, onOpenChange, onUpdate, sellers, stages
             </div>
           </div>
 
-          {/* Facebook Ads Data */}
-          {lead?.source?.toLowerCase().includes('facebook') && (
+          {/* Meta (Facebook/Instagram) Ads Data */}
+          {['facebook', 'instagram'].includes(lead?.source?.toLowerCase()) && (
             <div className="p-4 bg-blue-50 dark:bg-blue-950/20 rounded-lg border border-blue-200 dark:border-blue-800">
               <div className="flex items-center gap-2 mb-2">
                 <Facebook className="h-5 w-5 text-blue-600" />
-                <h3 className="font-semibold text-blue-900 dark:text-blue-100">Facebook Ads</h3>
+                <h3 className="font-semibold text-blue-900 dark:text-blue-100">{lead?.source} Ads</h3>
               </div>
               <p className="text-sm text-blue-700 dark:text-blue-300">
-                Bu lid Facebook reklamadan kelgan
+                Bu lid {lead?.source} reklamadan kelgan
               </p>
               {lead?.source && (
                 <p className="text-xs text-muted-foreground mt-1">Manba: {lead.source}</p>
