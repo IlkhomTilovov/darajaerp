@@ -43,7 +43,10 @@ router.get("/webhook", (req, res) => {
 
 /** Meta so'rovi haqiqatan ham Meta'dan kelganini tekshiradi (X-Hub-Signature-256). */
 function verifySignature(req: { headers: Record<string, unknown>; rawBody?: Buffer }): boolean {
-  if (!APP_SECRET) return true; // secret kiritilmagan bo'lsa tekshirilmaydi
+  if (!APP_SECRET) {
+    console.error("[facebook] FACEBOOK_APP_SECRET sozlanmagan — so'rov rad etildi");
+    return false;
+  }
   const header = req.headers["x-hub-signature-256"];
   if (typeof header !== "string" || !header.startsWith("sha256=")) return false;
   if (!req.rawBody) return false;
