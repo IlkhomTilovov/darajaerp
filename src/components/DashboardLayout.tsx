@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, type ComponentProps } from "react";
 import { useNavigate, Link, useLocation } from "react-router-dom";
 import { api } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
@@ -24,6 +24,7 @@ import { toast } from "sonner";
 import { useUserRoles } from "@/hooks/useUserRoles";
 import TaskNotifications from "./TaskNotifications";
 import DashboardHeader from "./dashboard/DashboardHeader";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import {
   Sidebar,
   SidebarContent,
@@ -56,6 +57,22 @@ const CollapseToggle = () => {
     >
       <ChevronsLeft className={cn("h-4 w-4 transition-transform", state === "collapsed" && "rotate-180")} />
     </button>
+  );
+};
+
+const SidebarCollapsedTooltipContent = ({ className, children, ...props }: ComponentProps<typeof TooltipContent>) => {
+  const { state, isMobile } = useSidebar();
+
+  return (
+    <TooltipContent
+      side="right"
+      align="center"
+      hidden={state !== "collapsed" || isMobile}
+      className={cn("rounded-2xl border-none shadow-lg", className)}
+      {...props}
+    >
+      {children}
+    </TooltipContent>
   );
 };
 
@@ -182,7 +199,7 @@ const DashboardLayout = ({ children, headerExtra }: DashboardLayoutProps) => {
 
   return (
     <SidebarProvider>
-      <Sidebar collapsible="icon">
+      <Sidebar collapsible="icon" variant="floating">
         <SidebarHeader className="gap-0 border-b px-3 py-3">
           <div className="flex items-center justify-between gap-2">
             <Link to="/" className="flex items-center gap-2 overflow-hidden">
@@ -205,7 +222,7 @@ const DashboardLayout = ({ children, headerExtra }: DashboardLayoutProps) => {
         <SidebarContent>
           {navGroups.map((group) => (
             <SidebarGroup key={group.label}>
-              <SidebarGroupLabel className="text-[11px] font-semibold uppercase tracking-wider">
+              <SidebarGroupLabel className="text-[11px] font-semibold uppercase tracking-wider group-data-[collapsible=icon]:mt-0 group-data-[collapsible=icon]:h-auto group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:whitespace-nowrap group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:text-center group-data-[collapsible=icon]:text-[8px] group-data-[collapsible=icon]:tracking-normal group-data-[collapsible=icon]:opacity-100">
                 {group.label}
               </SidebarGroupLabel>
               <SidebarGroupContent>
@@ -218,20 +235,29 @@ const DashboardLayout = ({ children, headerExtra }: DashboardLayoutProps) => {
                         <SidebarMenuButton
                           asChild
                           isActive={isActive}
-                          tooltip={item.label}
+                          tooltip={{
+                            children: item.label,
+                            className: cn(
+                              "rounded-2xl border-none px-4 py-2 font-medium shadow-lg",
+                              isActive && "bg-primary text-primary-foreground",
+                            ),
+                          }}
                           className={cn(
                             "h-10 border-l-2 border-transparent pl-2.5",
+                            "group-data-[collapsible=icon]:!size-11 group-data-[collapsible=icon]:!p-0 group-data-[collapsible=icon]:mx-auto group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-2xl group-data-[collapsible=icon]:border-l-0 group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:shadow-none",
                             isActive &&
                               "border-primary bg-primary/10 font-semibold text-primary hover:bg-primary/10 hover:text-primary data-[active=true]:bg-primary/10 data-[active=true]:text-primary",
+                            isActive &&
+                              "group-data-[collapsible=icon]:bg-primary group-data-[collapsible=icon]:text-primary-foreground group-data-[collapsible=icon]:hover:bg-primary group-data-[collapsible=icon]:hover:text-primary-foreground",
                           )}
                         >
                           <Link to={item.path}>
                             <Icon className="h-4 w-4" />
-                            <span className="flex-1 truncate">{item.label}</span>
+                            <span className="flex-1 truncate group-data-[collapsible=icon]:hidden">{item.label}</span>
                             {item.badge !== undefined && (
                               <Badge
                                 variant={item.badgeVariant ?? "destructive"}
-                                className="h-5 min-w-[20px] shrink-0 rounded-full px-1.5 text-xs font-bold"
+                                className="h-5 min-w-[20px] shrink-0 rounded-full px-1.5 text-xs font-bold group-data-[collapsible=icon]:hidden"
                               >
                                 {item.badge}
                               </Badge>
@@ -239,6 +265,14 @@ const DashboardLayout = ({ children, headerExtra }: DashboardLayoutProps) => {
                             <ChevronRight className="h-3.5 w-3.5 shrink-0 text-sidebar-foreground/30 group-data-[collapsible=icon]:hidden" />
                           </Link>
                         </SidebarMenuButton>
+                        {item.badge !== undefined && (
+                          <Badge
+                            variant={item.badgeVariant ?? "destructive"}
+                            className="pointer-events-none absolute -right-1 -top-1 hidden h-4 min-w-[16px] items-center justify-center rounded-full px-1 text-[9px] font-bold leading-none group-data-[collapsible=icon]:flex"
+                          >
+                            {item.badge}
+                          </Badge>
+                        )}
                       </SidebarMenuItem>
                     );
                   })}
@@ -248,27 +282,43 @@ const DashboardLayout = ({ children, headerExtra }: DashboardLayoutProps) => {
           ))}
         </SidebarContent>
 
-        <SidebarFooter className="gap-3 border-t p-3">
-          <Link
-            to="/profile"
-            className="flex items-center gap-2 rounded-md p-1 transition-colors hover:bg-sidebar-accent"
-          >
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">
-              {initials}
-            </div>
-            <div className="min-w-0 flex-1 overflow-hidden group-data-[collapsible=icon]:hidden">
-              <p className="truncate text-sm font-semibold">{displayName}</p>
-              <p className="truncate text-xs text-sidebar-foreground/60">{roleLabel}</p>
-            </div>
-          </Link>
-          <button
-            type="button"
-            onClick={handleSignOut}
-            className="flex items-center justify-center gap-2 rounded-md bg-destructive/10 px-3 py-2 text-sm font-medium text-destructive transition-colors hover:bg-destructive/15 group-data-[collapsible=icon]:px-0"
-          >
-            <LogOut className="h-4 w-4 shrink-0" />
-            <span className="group-data-[collapsible=icon]:hidden">Chiqish</span>
-          </button>
+        <SidebarFooter className="gap-3 border-t p-3 group-data-[collapsible=icon]:items-center">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Link
+                to="/profile"
+                className="flex items-center gap-2 rounded-md p-1 transition-colors hover:bg-sidebar-accent"
+              >
+                <div className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">
+                  {initials}
+                  <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-sidebar bg-green-500" />
+                </div>
+                <div className="min-w-0 flex-1 overflow-hidden group-data-[collapsible=icon]:hidden">
+                  <p className="truncate text-sm font-semibold">{displayName}</p>
+                  <p className="truncate text-xs text-sidebar-foreground/60">{roleLabel}</p>
+                </div>
+              </Link>
+            </TooltipTrigger>
+            <SidebarCollapsedTooltipContent className="px-4 py-2">
+              <p className="font-semibold leading-tight">{displayName}</p>
+              <p className="text-xs text-muted-foreground">{roleLabel}</p>
+            </SidebarCollapsedTooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={handleSignOut}
+                className="flex items-center justify-center gap-2 rounded-md bg-destructive/10 px-3 py-2 text-sm font-medium text-destructive transition-colors hover:bg-destructive/15 group-data-[collapsible=icon]:mx-auto group-data-[collapsible=icon]:h-11 group-data-[collapsible=icon]:w-11 group-data-[collapsible=icon]:rounded-2xl group-data-[collapsible=icon]:px-0"
+              >
+                <LogOut className="h-4 w-4 shrink-0" />
+                <span className="group-data-[collapsible=icon]:hidden">Chiqish</span>
+              </button>
+            </TooltipTrigger>
+            <SidebarCollapsedTooltipContent className="px-4 py-2 font-medium text-destructive">
+              Chiqish
+            </SidebarCollapsedTooltipContent>
+          </Tooltip>
         </SidebarFooter>
       </Sidebar>
 

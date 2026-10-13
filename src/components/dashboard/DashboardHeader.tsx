@@ -28,7 +28,7 @@ const DashboardHeader = ({ overdueTasksCount, displayName, roleLabel, initials, 
 
   return (
     <header className="sticky top-0 z-30 flex h-16 shrink-0 items-center gap-3 border-b bg-card px-4 sm:px-6">
-      <SidebarTrigger className="md:hidden" />
+      <SidebarTrigger />
 
       <div className="relative hidden max-w-md flex-1 sm:block">
         <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
