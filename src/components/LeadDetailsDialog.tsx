@@ -10,7 +10,7 @@ import { api, ApiError } from "@/lib/api";
 import { toast } from "sonner";
 import { useUserRoles } from "@/hooks/useUserRoles";
 import { format } from "date-fns";
-import { CalendarIcon, User, Phone, DollarSign, Facebook, CheckCircle2, Clock, Plus, MessageSquare, Trash2, Truck } from "lucide-react";
+import { CalendarIcon, User, Phone, DollarSign, Facebook, CheckCircle2, Clock, Plus, MessageSquare, Trash2, Truck, Package, X } from "lucide-react";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
@@ -39,6 +39,9 @@ const LeadDetailsDialog = ({ lead, open, onOpenChange, onUpdate, sellers, stages
   const [price, setPrice] = useState(lead?.price?.toString() || "");
   const [notes, setNotes] = useState(lead?.notes || "");
   const [deliveryStatus, setDeliveryStatus] = useState(lead?.delivery_status || "");
+  const [products, setProducts] = useState<any[]>([]);
+  const [linkedOrder, setLinkedOrder] = useState<any>(null);
+  const [orderItems, setOrderItems] = useState<{ product_name: string; quantity: number; price: number }[]>([]);
   const [taskForm, setTaskForm] = useState({
     title: "",
     description: "",
@@ -58,8 +61,69 @@ const LeadDetailsDialog = ({ lead, open, onOpenChange, onUpdate, sellers, stages
       setPrice(lead.price?.toString() || "");
       setNotes(lead.notes || "");
       setDeliveryStatus(lead.delivery_status || "");
+
+      // A lead auto-creates its order the moment it enters "Sotildi" (see
+      // server/src/routes/leads.ts), so by the time this dialog can show the
+      // products section, that order already exists — just find and load it.
+      if (stages.find((s) => s.id === lead.stage)?.name === "Sotildi") {
+        fetchOrderData();
+      } else {
+        setLinkedOrder(null);
+        setOrderItems([]);
+      }
     }
   }, [open, lead]);
+
+  const fetchOrderData = async () => {
+    try {
+      const [productsData, ordersData] = await Promise.all([api.products.list(), api.orders.list()]);
+      setProducts(productsData);
+      const order = ordersData.find((o: any) => o.lead_id === lead.id) || null;
+      setLinkedOrder(order);
+      setOrderItems(
+        (order?.order_items || []).map((i: any) => ({
+          product_name: i.product_name,
+          quantity: i.quantity,
+          price: Number(i.price),
+        })),
+      );
+    } catch (error) {
+      console.error("Error fetching order products:", error);
+    }
+  };
+
+  const addProduct = (product: any) => {
+    setOrderItems((prev) => {
+      const existingIndex = prev.findIndex((i) => i.product_name === product.name);
+      if (existingIndex >= 0) {
+        const next = [...prev];
+        next[existingIndex] = { ...next[existingIndex], quantity: next[existingIndex].quantity + 1 };
+        return next;
+      }
+      return [...prev, { product_name: product.name, quantity: 1, price: Number(product.price) || 0 }];
+    });
+  };
+
+  const removeProduct = (index: number) => {
+    setOrderItems((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const updateProductQuantity = (index: number, quantity: number) => {
+    setOrderItems((prev) => prev.map((item, i) => (i === index ? { ...item, quantity: Math.max(1, quantity) } : item)));
+  };
+
+  const handleSaveProducts = async () => {
+    if (!linkedOrder) return;
+
+    try {
+      const updated = await api.orders.update(linkedOrder.id, { items: orderItems });
+      setLinkedOrder(updated);
+      toast.success("Mahsulotlar saqlandi");
+    } catch (error) {
+      console.error("Error saving order products:", error);
+      toast.error(error instanceof ApiError ? error.message : "Mahsulotlarni saqlashda xato");
+    }
+  };
 
   const fetchTasks = async () => {
     try {
@@ -214,6 +278,14 @@ const LeadDetailsDialog = ({ lead, open, onOpenChange, onUpdate, sellers, stages
       setSelectedStage(newStageId);
       toast.success("Bosqich o'zgartirildi");
       onUpdate();
+
+      // Switching to "Sotildi" right here reveals the products section
+      // immediately (isSoldStage reacts to local selectedStage), but the
+      // order behind it was only just auto-created server-side — load it
+      // now instead of waiting for the dialog to be reopened.
+      if (stages.find((s) => s.id === newStageId)?.name === "Sotildi") {
+        fetchOrderData();
+      }
     } catch (error) {
       console.error("Error updating stage:", error);
       toast.error("Bosqichni o'zgartirishda xato");
@@ -374,6 +446,61 @@ const LeadDetailsDialog = ({ lead, open, onOpenChange, onUpdate, sellers, stages
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+          )}
+
+          {/* Sold Products - Only for Sotildi stage */}
+          {isSoldStage && (
+            <div className="p-4 bg-muted rounded-lg">
+              <Label className="flex items-center gap-2 mb-2">
+                <Package className="h-4 w-4" />
+                Sotilgan mahsulotlar
+              </Label>
+
+              {products.length > 0 && (
+                <div className="flex flex-wrap gap-2 mb-3">
+                  {products.map((product) => (
+                    <Button
+                      key={product.id}
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => addProduct(product)}
+                    >
+                      <Plus className="h-3 w-3 mr-1" />
+                      {product.name}
+                    </Button>
+                  ))}
+                </div>
+              )}
+
+              {orderItems.length === 0 ? (
+                <p className="text-sm text-muted-foreground">Mahsulot tanlanmagan</p>
+              ) : (
+                <div className="space-y-2">
+                  {orderItems.map((item, index) => (
+                    <div key={index} className="flex items-center gap-2">
+                      <span className="flex-1 truncate text-sm">{item.product_name}</span>
+                      <Input
+                        type="number"
+                        min={1}
+                        value={item.quantity}
+                        onChange={(e) => updateProductQuantity(index, parseInt(e.target.value) || 1)}
+                        className="w-20"
+                      />
+                      <Button type="button" variant="ghost" size="icon" onClick={() => removeProduct(index)}>
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {linkedOrder && (
+                <Button size="sm" className="mt-3" onClick={handleSaveProducts}>
+                  Saqlash
+                </Button>
+              )}
             </div>
           )}
 
