@@ -446,6 +446,15 @@ const Leads = () => {
     setActiveLead(lead);
   };
 
+  // The drop target can be the column's own droppable zone (over.id is a stage id,
+  // e.g. dropping on empty space) or another card being hovered (over.id is a lead
+  // id, e.g. dropping near a card inside a different column) — resolve either to
+  // the destination stage.
+  const resolveDropStageId = (overId: string) => {
+    if (stages.some((s) => s.id === overId)) return overId;
+    return leads.find((l) => l.id === overId)?.stage;
+  };
+
   const handleDragEnd = async (event: DragEndEvent) => {
     const { active, over } = event;
     setActiveLead(null);
@@ -453,7 +462,8 @@ const Leads = () => {
     if (!over) return;
 
     const leadId = active.id as string;
-    const newStageId = over.id as string;
+    const newStageId = resolveDropStageId(over.id as string);
+    if (!newStageId) return;
 
     const lead = leads.find(l => l.id === leadId);
     if (!lead || lead.stage === newStageId) return;
@@ -481,6 +491,16 @@ const Leads = () => {
         sellerId: lead.seller_id,
       });
     }
+  };
+
+  // Stage columns and lead cards now share one DndContext (see render below) so a
+  // card can be dropped into a different column, not just reordered within its own —
+  // dispatch to whichever drag this is by checking what active.id belongs to.
+  const handleBoardDragEnd = (event: DragEndEvent) => {
+    if (stages.some((s) => s.id === event.active.id)) {
+      return handleStageDragEnd(event);
+    }
+    return handleDragEnd(event);
   };
 
   const handleStageChange = async (leadId: string, newStageId: string) => {
@@ -927,7 +947,8 @@ const Leads = () => {
         <DndContext
           sensors={sensors}
           collisionDetection={closestCenter}
-          onDragEnd={handleStageDragEnd}
+          onDragStart={handleDragStart}
+          onDragEnd={handleBoardDragEnd}
         >
           <SortableContext items={stages.map(s => s.id)} strategy={horizontalListSortingStrategy}>
             <div
@@ -947,8 +968,6 @@ const Leads = () => {
                   }}
                   stages={stages}
                   onStageChange={handleStageChange}
-                  onDragStart={handleDragStart}
-                  onDragEnd={handleDragEnd}
                   onAddLead={openAddLeadDialog}
                 />
               ))}
