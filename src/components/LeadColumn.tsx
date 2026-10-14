@@ -25,7 +25,7 @@ const LeadColumn = ({ stage, title, leads, color, onLeadClick, stageData, stages
   const potential = leads.reduce((sum, l) => sum + (Number(l.price) || 0), 0);
 
   return (
-    <div className="flex h-full min-w-[300px] flex-col">
+    <div className="flex h-full w-[300px] shrink-0 flex-col">
       <div {...dragHandleProps} className={`cursor-grab rounded-t-xl p-3.5 active:cursor-grabbing ${color}`}>
         <div className="flex items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-1.5">
