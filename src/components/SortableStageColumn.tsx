@@ -9,6 +9,8 @@ interface SortableStageColumnProps {
   stages: any[];
   onStageChange: (leadId: string, newStageId: string) => void;
   onAddLead?: (stageId: string) => void;
+  canManage?: boolean;
+  onStageDeleted?: () => void;
 }
 
 const SortableStageColumn = ({
@@ -18,6 +20,8 @@ const SortableStageColumn = ({
   stages,
   onStageChange,
   onAddLead,
+  canManage,
+  onStageDeleted,
 }: SortableStageColumnProps) => {
   const {
     attributes,
@@ -47,6 +51,8 @@ const SortableStageColumn = ({
         onStageChange={onStageChange}
         onAddLead={onAddLead}
         dragHandleProps={{ ...attributes, ...listeners }}
+        canManage={canManage}
+        onStageDeleted={onStageDeleted}
       />
     </div>
   );

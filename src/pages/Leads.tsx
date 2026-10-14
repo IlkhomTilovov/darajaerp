@@ -969,6 +969,8 @@ const Leads = () => {
                   stages={stages}
                   onStageChange={handleStageChange}
                   onAddLead={openAddLeadDialog}
+                  canManage={isAdminOrRop}
+                  onStageDeleted={fetchStages}
                 />
               ))}
             </div>
