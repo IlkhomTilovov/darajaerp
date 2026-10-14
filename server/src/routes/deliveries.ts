@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { db, schema } from "../db/index.js";
 import { isAdminOrRop, requireAuth, type AuthUser } from "../middleware/auth.js";
@@ -73,8 +73,12 @@ router.get(
   }),
 );
 
+const BUILT_IN_STATUSES = new Set(["ready", "in_transit", "delivered", "needs_followup", "rejected"]);
+
 const updateSchema = z.object({
-  status: z.enum(["ready", "in_transit", "delivered", "needs_followup", "rejected"]).optional(),
+  // Accepts either a built-in status or an admin-defined custom delivery_statuses
+  // id (validated against the company's own rows further down, not here).
+  status: z.string().min(1).optional(),
   courierName: z.string().nullable().optional(),
   courierPhone: z.string().nullable().optional(),
   deliveryFee: z.number().nullable().optional(),
@@ -111,12 +115,32 @@ router.patch(
     }
 
     if (data.status && data.status !== existing.status) {
-      const allowed = ALLOWED_TRANSITIONS[existing.status] ?? [];
-      if (!allowed.includes(data.status)) {
-        return res.status(400).json({
-          error: `"${STATUS_LABELS[existing.status] ?? existing.status}" holatidan "${STATUS_LABELS[data.status] ?? data.status}"ga o'tib bo'lmaydi`,
-        });
+      const fromIsBuiltIn = BUILT_IN_STATUSES.has(existing.status);
+      const toIsBuiltIn = BUILT_IN_STATUSES.has(data.status);
+
+      if (!toIsBuiltIn) {
+        // Custom column: must be one of this company's own admin-defined statuses.
+        const customStatusFilter = user.companyId
+          ? and(eq(schema.deliveryStatuses.id, data.status), eq(schema.deliveryStatuses.companyId, user.companyId))
+          : eq(schema.deliveryStatuses.id, data.status);
+        const [customStatus] = await db.select({ id: schema.deliveryStatuses.id }).from(schema.deliveryStatuses).where(customStatusFilter).limit(1);
+        if (!customStatus) {
+          return res.status(400).json({ error: "Noto'g'ri holat" });
+        }
       }
+
+      // Custom columns are purely organizational and freely reachable from/to
+      // any status; the strict built-in pipeline rules only apply when both
+      // ends of the move are among the 5 fixed statuses.
+      if (fromIsBuiltIn && toIsBuiltIn) {
+        const allowed = ALLOWED_TRANSITIONS[existing.status] ?? [];
+        if (!allowed.includes(data.status)) {
+          return res.status(400).json({
+            error: `"${STATUS_LABELS[existing.status] ?? existing.status}" holatidan "${STATUS_LABELS[data.status] ?? data.status}"ga o'tib bo'lmaydi`,
+          });
+        }
+      }
+
       if (data.status === "rejected" && !(data.rejectionReason ?? existing.rejectionReason)) {
         return res.status(400).json({ error: "Rad etish sababi kiritilishi shart" });
       }

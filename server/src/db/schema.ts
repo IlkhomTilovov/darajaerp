@@ -77,6 +77,20 @@ export const stages = pgTable("stages", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// Admin-defined extra columns for the Dastavka Kanban, appended after the 5
+// fixed built-in delivery statuses (ready/in_transit/delivered/needs_followup/
+// rejected — see src/lib/deliveryDisplay.ts). Purely organizational: unlike
+// the built-ins, reaching a custom column never writes back to orders.status.
+export const deliveryStatuses = pgTable("delivery_statuses", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  companyId: uuid("company_id").references(() => companies.id, { onDelete: "set null" }),
+  name: text("name").notNull(),
+  displayOrder: integer("display_order").notNull(),
+  color: text("color").notNull().default("bg-blue-500"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const leads = pgTable("leads", {
   id: uuid("id").primaryKey().defaultRandom(),
   companyId: uuid("company_id").references(() => companies.id, { onDelete: "set null" }),

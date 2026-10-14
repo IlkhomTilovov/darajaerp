@@ -4,19 +4,20 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { useDroppable } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import SortableDeliveryCard from "./SortableDeliveryCard";
-import { DELIVERY_STATUS_META, type DeliveryStatus } from "@/lib/deliveryDisplay";
+import { getStatusMeta, type CustomDeliveryStatus } from "@/lib/deliveryDisplay";
 import type { DeliveryBoardItem } from "@/pages/delivery/DeliveryKanban";
 
 interface DeliveryColumnProps {
-  status: DeliveryStatus;
+  status: string;
   items: DeliveryBoardItem[];
   onCardClick: (item: DeliveryBoardItem) => void;
   dragDisabled?: boolean;
+  customStatuses: CustomDeliveryStatus[];
 }
 
-const DeliveryColumn = ({ status, items, onCardClick, dragDisabled }: DeliveryColumnProps) => {
+const DeliveryColumn = ({ status, items, onCardClick, dragDisabled, customStatuses }: DeliveryColumnProps) => {
   const { setNodeRef } = useDroppable({ id: status });
-  const meta = DELIVERY_STATUS_META[status];
+  const meta = getStatusMeta(status, customStatuses);
   const totalAmount = items.reduce((sum, i) => sum + i.totalAmount, 0);
 
   return (

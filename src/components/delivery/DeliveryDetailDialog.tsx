@@ -10,13 +10,13 @@ import { api, ApiError } from "@/lib/api";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import {
-  ALLOWED_TRANSITIONS,
-  DELIVERY_STATUS_META,
   REJECTION_REASON_OPTIONS,
-  getDeliveryStatusMeta,
+  getAllowedNextStatuses,
   getPaymentStatus,
+  getStatusLabel,
+  getStatusMeta,
   PAYMENT_STATUS_META,
-  type DeliveryStatus,
+  type CustomDeliveryStatus,
 } from "@/lib/deliveryDisplay";
 import type { DeliveryBoardItem } from "@/pages/delivery/DeliveryKanban";
 
@@ -27,14 +27,15 @@ interface DeliveryDetailDialogProps {
   onUpdate: () => void;
   canEdit: boolean;
   usersById: Map<string, { full_name: string }>;
+  customStatuses: CustomDeliveryStatus[];
 }
 
-const describeHistoryEntry = (entry: any): string => {
+const describeHistoryEntry = (entry: any, customStatuses: CustomDeliveryStatus[]): string => {
   const meta = entry.metadata || {};
   if (entry.action === "created") return "Yetkazma yaratildi";
   if (entry.action === "status_changed") {
-    const from = DELIVERY_STATUS_META[meta.from as DeliveryStatus]?.label ?? meta.from;
-    const to = DELIVERY_STATUS_META[meta.to as DeliveryStatus]?.label ?? meta.to;
+    const from = getStatusLabel(meta.from, customStatuses);
+    const to = getStatusLabel(meta.to, customStatuses);
     let text = `Holat: ${from} → ${to}`;
     if (meta.reason) text += ` (${REJECTION_REASON_OPTIONS.find((r) => r.value === meta.reason)?.label ?? meta.reason})`;
     if (meta.note) text += ` — ${meta.note}`;
@@ -43,11 +44,11 @@ const describeHistoryEntry = (entry: any): string => {
   return "Ma'lumotlar yangilandi";
 };
 
-const DeliveryDetailDialog = ({ item, open, onOpenChange, onUpdate, canEdit, usersById }: DeliveryDetailDialogProps) => {
+const DeliveryDetailDialog = ({ item, open, onOpenChange, onUpdate, canEdit, usersById, customStatuses }: DeliveryDetailDialogProps) => {
   const [saving, setSaving] = useState(false);
   const [history, setHistory] = useState<any[]>([]);
   const [form, setForm] = useState({
-    status: item.status as DeliveryStatus,
+    status: item.status,
     courierName: item.courierName ?? "",
     courierPhone: item.courierPhone ?? "",
     deliveryFee: item.deliveryFee !== null ? String(item.deliveryFee) : "",
@@ -81,8 +82,8 @@ const DeliveryDetailDialog = ({ item, open, onOpenChange, onUpdate, canEdit, use
     }
   }, [item.orderId, item.deliveryId]);
 
-  const statusMeta = getDeliveryStatusMeta(item.status);
-  const allowedNext = ALLOWED_TRANSITIONS[item.status] ?? [];
+  const statusMeta = getStatusMeta(item.status, customStatuses);
+  const allowedNext = getAllowedNextStatuses(item.status, customStatuses);
   const payment = getPaymentStatus(item.totalAmount, item.advancePayment);
   const paymentMeta = PAYMENT_STATUS_META[payment];
 
@@ -175,7 +176,7 @@ const DeliveryDetailDialog = ({ item, open, onOpenChange, onUpdate, canEdit, use
 
           <div>
             <Label className="mb-1.5 block text-xs text-muted-foreground">Holat</Label>
-            <Select value={form.status} onValueChange={(v) => setForm({ ...form, status: v as DeliveryStatus })} disabled={!canEdit}>
+            <Select value={form.status} onValueChange={(v) => setForm({ ...form, status: v })} disabled={!canEdit}>
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
@@ -183,7 +184,7 @@ const DeliveryDetailDialog = ({ item, open, onOpenChange, onUpdate, canEdit, use
                 <SelectItem value={item.status}>{statusMeta.label} (joriy)</SelectItem>
                 {allowedNext.map((s) => (
                   <SelectItem key={s} value={s}>
-                    {DELIVERY_STATUS_META[s].label}
+                    {getStatusLabel(s, customStatuses)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -267,7 +268,7 @@ const DeliveryDetailDialog = ({ item, open, onOpenChange, onUpdate, canEdit, use
               {history.map((entry) => (
                 <div key={entry.id} className="flex items-start justify-between gap-2 text-xs">
                   <div>
-                    <p>{describeHistoryEntry(entry)}</p>
+                    <p>{describeHistoryEntry(entry, customStatuses)}</p>
                     <p className="text-muted-foreground">{usersById.get(entry.actor_id)?.full_name ?? "Noma'lum"}</p>
                   </div>
                   <span className="shrink-0 text-muted-foreground">{format(new Date(entry.created_at), "dd.MM.yyyy HH:mm")}</span>

@@ -59,6 +59,56 @@ export const ALLOWED_TRANSITIONS: Record<DeliveryStatus, DeliveryStatus[]> = {
   rejected: [],
 };
 
+export interface CustomDeliveryStatus {
+  id: string;
+  name: string;
+  color: string;
+}
+
+// Admin-added columns (src/components/delivery/DeliveryStatusManagement.tsx)
+// are purely organizational and sit outside the fixed 5-status pipeline, so
+// they're always freely reachable from — and can freely move to — any other
+// column, built-in or custom. The strict ALLOWED_TRANSITIONS rules above only
+// ever apply between two built-in statuses.
+export const getAllowedNextStatuses = (current: string, customStatuses: CustomDeliveryStatus[]): string[] => {
+  const customIds = customStatuses.map((s) => s.id).filter((id) => id !== current);
+  if ((DELIVERY_STATUS_ORDER as string[]).includes(current)) {
+    return [...(ALLOWED_TRANSITIONS[current as DeliveryStatus] ?? []), ...customIds];
+  }
+  return [...DELIVERY_STATUS_ORDER, ...customIds];
+};
+
+export const getStatusLabel = (status: string, customStatuses: CustomDeliveryStatus[]): string =>
+  DELIVERY_STATUS_META[status as DeliveryStatus]?.label ?? customStatuses.find((s) => s.id === status)?.name ?? status;
+
+// Written out as full literal strings (not built via template interpolation)
+// so Tailwind's content scanner actually picks them up — matches the same
+// bg-*-500 palette offered by StageManagement.tsx's COLOR_OPTIONS.
+const COLOR_BADGE_CLASSES: Record<string, string> = {
+  "bg-blue-500": "border-blue-300 bg-blue-50 text-blue-700",
+  "bg-green-500": "border-green-300 bg-green-50 text-green-700",
+  "bg-red-500": "border-red-300 bg-red-50 text-red-700",
+  "bg-orange-500": "border-orange-300 bg-orange-50 text-orange-700",
+  "bg-purple-500": "border-purple-300 bg-purple-50 text-purple-700",
+  "bg-pink-500": "border-pink-300 bg-pink-50 text-pink-700",
+  "bg-yellow-500": "border-yellow-300 bg-yellow-50 text-yellow-700",
+  "bg-indigo-500": "border-indigo-300 bg-indigo-50 text-indigo-700",
+  "bg-teal-500": "border-teal-300 bg-teal-50 text-teal-700",
+};
+
+export const getStatusMeta = (status: string, customStatuses: CustomDeliveryStatus[]) => {
+  const builtIn = DELIVERY_STATUS_META[status as DeliveryStatus];
+  if (builtIn) return builtIn;
+  const custom = customStatuses.find((s) => s.id === status);
+  if (!custom) return DELIVERY_STATUS_META.ready;
+  return {
+    label: custom.name,
+    headerClassName: custom.color,
+    badgeClassName: COLOR_BADGE_CLASSES[custom.color] ?? "border-border bg-muted text-foreground",
+    dotClassName: custom.color,
+  };
+};
+
 export const REJECTION_REASON_OPTIONS: { value: string; label: string }[] = [
   { value: "customer_rejected", label: "Mijoz buyurtmani rad etdi" },
   { value: "customer_changed_mind", label: "Mijoz fikridan qaytdi" },

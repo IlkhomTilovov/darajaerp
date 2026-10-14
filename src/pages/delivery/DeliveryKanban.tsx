@@ -4,6 +4,7 @@ import DashboardLayout from "@/components/DashboardLayout";
 import DashboardStatCard from "@/components/dashboard/DashboardStatCard";
 import DeliveryColumn from "@/components/delivery/DeliveryColumn";
 import DeliveryDetailDialog from "@/components/delivery/DeliveryDetailDialog";
+import DeliveryStatusManagement from "@/components/delivery/DeliveryStatusManagement";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -18,17 +19,18 @@ import { toast } from "sonner";
 import { format } from "date-fns";
 import { useUserRoles } from "@/hooks/useUserRoles";
 import {
-  ALLOWED_TRANSITIONS,
   DELIVERY_STATUS_ORDER,
   REJECTION_REASON_OPTIONS,
   deriveDeliveryStatus,
-  type DeliveryStatus,
+  getAllowedNextStatuses,
+  getStatusLabel,
+  type CustomDeliveryStatus,
 } from "@/lib/deliveryDisplay";
 
 export interface DeliveryBoardItem {
   orderId: string;
   deliveryId: string | null;
-  status: DeliveryStatus;
+  status: string;
   orderNumber: number;
   customerName: string;
   customerPhone: string | null;
@@ -61,10 +63,11 @@ const DeliveryKanban = () => {
   const [orders, setOrders] = useState<any[]>([]);
   const [deliveries, setDeliveries] = useState<any[]>([]);
   const [sellers, setSellers] = useState<any[]>([]);
+  const [customStatuses, setCustomStatuses] = useState<CustomDeliveryStatus[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [sellerFilter, setSellerFilter] = useState("all");
-  const [statusFilter, setStatusFilter] = useState<DeliveryStatus | "all">("all");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
   const [courierFilter, setCourierFilter] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [startDateFilter, setStartDateFilter] = useState<Date | undefined>(undefined);
@@ -83,10 +86,16 @@ const DeliveryKanban = () => {
 
   const fetchAll = async () => {
     try {
-      const [ordersData, deliveriesData, sellersData] = await Promise.all([api.orders.list(), api.deliveries.list(), api.profiles.list()]);
+      const [ordersData, deliveriesData, sellersData, customStatusesData] = await Promise.all([
+        api.orders.list(),
+        api.deliveries.list(),
+        api.profiles.list(),
+        api.deliveryStatuses.list(),
+      ]);
       setOrders(ordersData);
       setDeliveries(deliveriesData);
       setSellers(sellersData);
+      setCustomStatuses(customStatusesData.sort((a: any, b: any) => a.display_order - b.display_order));
     } catch (error) {
       toast.error(error instanceof ApiError ? error.message : "Yuklashda xato");
     } finally {
@@ -165,12 +174,14 @@ const DeliveryKanban = () => {
     });
   }, [statsItems, courierFilter, searchQuery]);
 
-  const visibleStatuses = statusFilter === "all" ? DELIVERY_STATUS_ORDER : [statusFilter];
+  // Built-in statuses first, then admin-added custom columns appended after them.
+  const allColumnIds = useMemo(() => [...DELIVERY_STATUS_ORDER, ...customStatuses.map((s) => s.id)], [customStatuses]);
+  const visibleStatuses = statusFilter === "all" ? allColumnIds : [statusFilter];
   const groupedByStatus = useMemo(() => {
-    const map = new Map<DeliveryStatus, DeliveryBoardItem[]>();
-    for (const status of DELIVERY_STATUS_ORDER) map.set(status, kanbanItems.filter((i) => i.status === status));
+    const map = new Map<string, DeliveryBoardItem[]>();
+    for (const status of allColumnIds) map.set(status, kanbanItems.filter((i) => i.status === status));
     return map;
-  }, [kanbanItems]);
+  }, [kanbanItems, allColumnIds]);
 
   const stats = {
     total: statsItems.length,
@@ -198,13 +209,13 @@ const DeliveryKanban = () => {
     if (!activeItem) return;
 
     const overId = over.id as string;
-    const targetStatus: DeliveryStatus = (DELIVERY_STATUS_ORDER as string[]).includes(overId)
-      ? (overId as DeliveryStatus)
+    const targetStatus: string = allColumnIds.includes(overId)
+      ? overId
       : boardItems.find((i) => i.orderId === overId)?.status ?? activeItem.status;
 
     if (targetStatus === activeItem.status) return;
 
-    const allowed = ALLOWED_TRANSITIONS[activeItem.status] ?? [];
+    const allowed = getAllowedNextStatuses(activeItem.status, customStatuses);
     if (!allowed.includes(targetStatus)) {
       toast.error("Bu holatga o'tish mumkin emas");
       return;
@@ -285,19 +296,21 @@ const DeliveryKanban = () => {
             </Select>
           )}
 
-          <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as DeliveryStatus | "all")}>
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
             <SelectTrigger className="h-9 w-[180px]">
               <SelectValue placeholder="Barcha holatlar" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">Barcha holatlar</SelectItem>
-              {DELIVERY_STATUS_ORDER.map((s) => (
+              {allColumnIds.map((s) => (
                 <SelectItem key={s} value={s}>
-                  {s === "ready" ? "Yetkazishga tayyor" : s === "in_transit" ? "Yo'lda" : s === "delivered" ? "Yetkazildi" : s === "needs_followup" ? "Qayta bog'lanish kerak" : "Rad etildi"}
+                  {getStatusLabel(s, customStatuses)}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
+
+          {isAdminOrRop && <DeliveryStatusManagement onUpdate={fetchAll} />}
 
           <Select value={courierFilter} onValueChange={setCourierFilter}>
             <SelectTrigger className="h-9 w-[170px]">
@@ -368,6 +381,7 @@ const DeliveryKanban = () => {
                 items={groupedByStatus.get(status) ?? []}
                 onCardClick={setSelectedItem}
                 dragDisabled={!isAdminOrRop}
+                customStatuses={customStatuses}
               />
             ))}
           </div>
@@ -382,6 +396,7 @@ const DeliveryKanban = () => {
           onUpdate={fetchAll}
           canEdit={isAdminOrRop}
           usersById={usersById}
+          customStatuses={customStatuses}
         />
       )}
 

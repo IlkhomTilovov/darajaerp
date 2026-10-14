@@ -76,6 +76,12 @@ export const api = {
     update: (id: string, data: any) => patch<any>(`/stages/${id}`, data),
     remove: (id: string) => del<void>(`/stages/${id}`),
   },
+  deliveryStatuses: {
+    list: () => get<any[]>("/delivery-statuses"),
+    create: (data: any) => post<any>("/delivery-statuses", data),
+    update: (id: string, data: any) => patch<any>(`/delivery-statuses/${id}`, data),
+    remove: (id: string) => del<void>(`/delivery-statuses/${id}`),
+  },
   leads: {
     list: () => get<any[]>("/leads"),
     get: (id: string) => get<any>(`/leads/${id}`),
@@ -137,7 +143,8 @@ export const api = {
     updateByOrder: (
       orderId: string,
       data: Partial<{
-        status: "ready" | "in_transit" | "delivered" | "needs_followup" | "rejected";
+        // A built-in DeliveryStatus or a custom delivery_statuses row's id.
+        status: string;
         courier_name: string | null;
         courier_phone: string | null;
         delivery_fee: number | null;
