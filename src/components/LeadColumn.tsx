@@ -53,7 +53,11 @@ const LeadColumn = ({ stage, title, leads, color, onLeadClick, stageData, stages
 
       <Card className="flex-1 overflow-hidden rounded-t-none border-t-0 bg-muted/30">
         <ScrollArea className="h-[var(--kanban-col-h,calc(100vh_-_320px))]">
-          <div ref={setNodeRef} className="space-y-2.5 p-2.5">
+          {/* Radix wraps this child in an internal display:table div for horizontal-scroll
+              measurement, which sizes to content instead of the viewport unless a child
+              pins a fixed width — without it, a non-shrinking badge anywhere inside could
+              balloon every card in the column past the 300px column width. */}
+          <div ref={setNodeRef} className="w-[280px] space-y-2.5 p-2.5">
             <SortableContext items={leads.map((l) => l.id)} strategy={verticalListSortingStrategy}>
               {leads.map((lead) => (
                 <SortableLeadCard
