@@ -121,7 +121,7 @@ router.patch(
               customerName: existing.customerName,
               customerPhone: existing.customerPhone,
               notes: existing.notes,
-              totalAmount: existing.price ?? "0",
+              totalAmount: row.price ?? "0",
             })
             .returning();
           recordActivity({
@@ -134,6 +134,24 @@ router.patch(
             metadata: { leadId: row.id },
           });
         }
+      }
+    }
+
+    // Keep a sold lead's order amount in sync with later price edits — the
+    // order's totalAmount was otherwise only ever set once at creation time,
+    // so Dastavka kept showing a stale (often zero) amount after the seller
+    // adjusted the price afterward.
+    if (price !== undefined) {
+      const [linkedOrder] = await db
+        .select({ id: schema.orders.id })
+        .from(schema.orders)
+        .where(eq(schema.orders.leadId, row.id))
+        .limit(1);
+      if (linkedOrder) {
+        await db
+          .update(schema.orders)
+          .set({ totalAmount: String(price), updatedAt: new Date() })
+          .where(eq(schema.orders.id, linkedOrder.id));
       }
     }
 
