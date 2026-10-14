@@ -32,7 +32,7 @@ const LeadCard = ({ lead, isDragging, onClick, stage, stages, onLeadUpdate }: Le
         <div className="flex items-start justify-between gap-2">
           <h3 className="min-w-0 truncate text-sm font-semibold leading-tight">{lead.customer_name}</h3>
           {lead.lead_type && (
-            <Badge variant="outline" className={`shrink-0 whitespace-nowrap text-[10px] ${typeStyle.badgeClassName}`}>
+            <Badge variant="outline" className={`min-w-0 max-w-[45%] shrink-0 truncate text-[10px] ${typeStyle.badgeClassName}`}>
               {lead.lead_type}
             </Badge>
           )}
@@ -49,13 +49,13 @@ const LeadCard = ({ lead, isDragging, onClick, stage, stages, onLeadUpdate }: Le
 
         <div className="flex items-center justify-between gap-2">
           {lead.source ? (
-            <Badge variant="outline" className={`text-[10px] ${sourceStyle.badgeClassName}`}>
+            <Badge variant="outline" className={`min-w-0 max-w-[60%] truncate text-[10px] ${sourceStyle.badgeClassName}`}>
               {sourceStyle.label}
             </Badge>
           ) : (
             <span />
           )}
-          <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
+          <div className="flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground">
             <CalendarIcon className="h-3 w-3" />
             {format(new Date(lead.created_at), "dd.MM.yyyy HH:mm")}
           </div>
