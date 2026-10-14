@@ -41,7 +41,7 @@ const LeadCard = ({ lead, isDragging, onClick, stage, stages, onLeadUpdate }: Le
         {lead.customer_phone && (
           <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
             <Phone className="h-3.5 w-3.5 shrink-0" />
-            <span className="truncate">{lead.customer_phone}</span>
+            <span className="min-w-0 truncate">{lead.customer_phone}</span>
           </div>
         )}
 
@@ -70,7 +70,7 @@ const LeadCard = ({ lead, isDragging, onClick, stage, stages, onLeadUpdate }: Le
                     {getInitials(sellerName)}
                   </AvatarFallback>
                 </Avatar>
-                <span className="truncate text-xs text-muted-foreground">{sellerName}</span>
+                <span className="min-w-0 truncate text-xs text-muted-foreground">{sellerName}</span>
               </>
             )}
           </div>
