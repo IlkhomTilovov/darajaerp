@@ -75,6 +75,9 @@ const Leads = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const filtersRowRef = useRef<HTMLDivElement>(null);
   const [kanbanColHeight, setKanbanColHeight] = useState<number | null>(null);
+  const boardRef = useRef<HTMLDivElement>(null);
+  const [isPanningBoard, setIsPanningBoard] = useState(false);
+  const panStateRef = useRef({ startX: 0, scrollLeft: 0 });
   const [pendingStageChange, setPendingStageChange] = useState<{
     leadId: string;
     leadName: string;
@@ -149,6 +152,38 @@ const Leads = () => {
       window.removeEventListener("resize", recompute);
     };
   }, [viewMode]);
+
+  // Lets users click-and-drag empty board space (not a card or a column's drag
+  // handle — those stay owned by dnd-kit) to pan the Kanban board horizontally,
+  // like a scrollable canvas, instead of requiring the scrollbar/trackpad.
+  const handleBoardMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    const target = e.target as HTMLElement;
+    if (target.closest(".cursor-grab") || target.closest("[data-sortable-lead]")) return;
+    const board = boardRef.current;
+    if (!board) return;
+    panStateRef.current = { startX: e.clientX, scrollLeft: board.scrollLeft };
+    setIsPanningBoard(true);
+  };
+
+  useEffect(() => {
+    if (!isPanningBoard) return;
+    const board = boardRef.current;
+    if (!board) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      e.preventDefault();
+      board.scrollLeft = panStateRef.current.scrollLeft - (e.clientX - panStateRef.current.startX);
+    };
+    const stopPanning = () => setIsPanningBoard(false);
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", stopPanning);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", stopPanning);
+    };
+  }, [isPanningBoard]);
 
   // Handle opening specific lead from URL parameter
   useEffect(() => {
@@ -896,8 +931,10 @@ const Leads = () => {
         >
           <SortableContext items={stages.map(s => s.id)} strategy={horizontalListSortingStrategy}>
             <div
-              className="flex gap-4 overflow-x-auto pb-4"
+              ref={boardRef}
+              className={`flex gap-4 overflow-x-auto pb-4 ${isPanningBoard ? "cursor-grabbing select-none" : "cursor-grab"}`}
               style={kanbanColHeight ? ({ "--kanban-col-h": `${kanbanColHeight}px` } as React.CSSProperties) : undefined}
+              onMouseDown={handleBoardMouseDown}
             >
               {stages.map((stage) => (
                 <SortableStageColumn
