@@ -9,7 +9,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { api } from "@/lib/api";
 import { toast } from "sonner";
 import SortableDeliveryCard from "./SortableDeliveryCard";
-import { getStatusMeta, type CustomDeliveryStatus } from "@/lib/deliveryDisplay";
+import { getColumnStatusKey, getStatusMeta, type DeliveryColumnRow } from "@/lib/deliveryDisplay";
 import type { DeliveryBoardItem } from "@/pages/delivery/DeliveryKanban";
 
 interface DeliveryColumnProps {
@@ -17,23 +17,24 @@ interface DeliveryColumnProps {
   items: DeliveryBoardItem[];
   onCardClick: (item: DeliveryBoardItem) => void;
   dragDisabled?: boolean;
-  customStatuses: CustomDeliveryStatus[];
-  isCustom?: boolean;
+  columns: DeliveryColumnRow[];
   canManage?: boolean;
   onColumnDeleted?: () => void;
   dragHandleProps?: Record<string, any>;
 }
 
-const DeliveryColumn = ({ status, items, onCardClick, dragDisabled, customStatuses, isCustom, canManage, onColumnDeleted, dragHandleProps }: DeliveryColumnProps) => {
+const DeliveryColumn = ({ status, items, onCardClick, dragDisabled, columns, canManage, onColumnDeleted, dragHandleProps }: DeliveryColumnProps) => {
   const { setNodeRef } = useDroppable({ id: status });
-  const meta = getStatusMeta(status, customStatuses);
+  const meta = getStatusMeta(status, columns);
+  const ownRow = columns.find((c) => getColumnStatusKey(c) === status);
   const totalAmount = items.reduce((sum, i) => sum + i.totalAmount, 0);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const handleDeleteColumn = async () => {
+    if (!ownRow) return;
     try {
-      await api.deliveryStatuses.remove(status);
-      toast.success("Ustun o'chirildi");
+      await api.deliveryStatuses.remove(ownRow.id);
+      toast.success(ownRow.built_in_key ? "Ustun yashirildi" : "Ustun o'chirildi");
       setConfirmDelete(false);
       onColumnDeleted?.();
     } catch (error) {
@@ -47,15 +48,13 @@ const DeliveryColumn = ({ status, items, onCardClick, dragDisabled, customStatus
       <div className={`rounded-t-xl p-3.5 ${meta.headerClassName}`}>
         <div className="flex items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-1.5">
-            {isCustom && canManage && (
-              <GripVertical {...dragHandleProps} className="h-4 w-4 shrink-0 cursor-grab text-white/50 active:cursor-grabbing" />
-            )}
+            {canManage && <GripVertical {...dragHandleProps} className="h-4 w-4 shrink-0 cursor-grab text-white/50 active:cursor-grabbing" />}
             <h2 className="truncate font-semibold text-white">{meta.label}</h2>
             <Badge variant="secondary" className="h-5 min-w-[20px] shrink-0 justify-center rounded-full border-0 bg-white/25 px-1.5 text-xs text-white">
               {items.length}
             </Badge>
           </div>
-          {isCustom && canManage && (
+          {canManage && ownRow && (
             <button
               type="button"
               onClick={() => setConfirmDelete(true)}
@@ -85,14 +84,16 @@ const DeliveryColumn = ({ status, items, onCardClick, dragDisabled, customStatus
       <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Ustunni o'chirish</AlertDialogTitle>
+            <AlertDialogTitle>{ownRow?.built_in_key ? "Ustunni yashirish" : "Ustunni o'chirish"}</AlertDialogTitle>
             <AlertDialogDescription>
-              "{meta.label}" ustunini o'chirishga ishonchingiz komilmi? Agar bu ustunda buyurtmalar bo'lsa, ular hech qaysi ustunda ko'rinmay qoladi (ma'lumotlari saqlanib qoladi, lekin topish qiyinlashadi).
+              {ownRow?.built_in_key
+                ? `"${meta.label}" asosiy ustun bo'lgani uchun butunlay o'chirilmaydi, lekin doskadan yashirinadi — xohlasangiz "Ustun qo'shish" oynasidan qayta ko'rsatishingiz mumkin.`
+                : `"${meta.label}" ustunini o'chirishga ishonchingiz komilmi? Agar bu ustunda buyurtmalar bo'lsa, ular hech qaysi ustunda ko'rinmay qoladi (ma'lumotlari saqlanib qoladi, lekin topish qiyinlashadi).`}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Bekor qilish</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDeleteColumn}>O'chirish</AlertDialogAction>
+            <AlertDialogAction onClick={handleDeleteColumn}>{ownRow?.built_in_key ? "Yashirish" : "O'chirish"}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

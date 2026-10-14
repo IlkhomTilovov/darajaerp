@@ -1,7 +1,7 @@
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import DeliveryColumn from "./DeliveryColumn";
-import type { CustomDeliveryStatus } from "@/lib/deliveryDisplay";
+import type { DeliveryColumnRow } from "@/lib/deliveryDisplay";
 import type { DeliveryBoardItem } from "@/pages/delivery/DeliveryKanban";
 
 interface SortableDeliveryColumnProps {
@@ -9,13 +9,13 @@ interface SortableDeliveryColumnProps {
   items: DeliveryBoardItem[];
   onCardClick: (item: DeliveryBoardItem) => void;
   dragDisabled?: boolean;
-  customStatuses: CustomDeliveryStatus[];
+  columns: DeliveryColumnRow[];
   canManage: boolean;
   onColumnDeleted: () => void;
 }
 
-const SortableDeliveryColumn = ({ status, items, onCardClick, dragDisabled, customStatuses, canManage, onColumnDeleted }: SortableDeliveryColumnProps) => {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: status });
+const SortableDeliveryColumn = ({ status, items, onCardClick, dragDisabled, columns, canManage, onColumnDeleted }: SortableDeliveryColumnProps) => {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: status, disabled: !canManage });
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -30,8 +30,7 @@ const SortableDeliveryColumn = ({ status, items, onCardClick, dragDisabled, cust
         items={items}
         onCardClick={onCardClick}
         dragDisabled={dragDisabled}
-        customStatuses={customStatuses}
-        isCustom
+        columns={columns}
         canManage={canManage}
         onColumnDeleted={onColumnDeleted}
         dragHandleProps={{ ...attributes, ...listeners }}

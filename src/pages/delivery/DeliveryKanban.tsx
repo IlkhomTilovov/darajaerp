@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import DashboardLayout from "@/components/DashboardLayout";
 import DashboardStatCard from "@/components/dashboard/DashboardStatCard";
-import DeliveryColumn from "@/components/delivery/DeliveryColumn";
 import SortableDeliveryColumn from "@/components/delivery/SortableDeliveryColumn";
 import DeliveryDetailDialog from "@/components/delivery/DeliveryDetailDialog";
 import DeliveryStatusManagement from "@/components/delivery/DeliveryStatusManagement";
@@ -21,12 +20,12 @@ import { toast } from "sonner";
 import { format } from "date-fns";
 import { useUserRoles } from "@/hooks/useUserRoles";
 import {
-  DELIVERY_STATUS_ORDER,
   REJECTION_REASON_OPTIONS,
   deriveDeliveryStatus,
   getAllowedNextStatuses,
+  getColumnStatusKey,
   getStatusLabel,
-  type CustomDeliveryStatus,
+  type DeliveryColumnRow,
 } from "@/lib/deliveryDisplay";
 
 export interface DeliveryBoardItem {
@@ -65,7 +64,7 @@ const DeliveryKanban = () => {
   const [orders, setOrders] = useState<any[]>([]);
   const [deliveries, setDeliveries] = useState<any[]>([]);
   const [sellers, setSellers] = useState<any[]>([]);
-  const [customStatuses, setCustomStatuses] = useState<CustomDeliveryStatus[]>([]);
+  const [columns, setColumns] = useState<DeliveryColumnRow[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [sellerFilter, setSellerFilter] = useState("all");
@@ -88,7 +87,7 @@ const DeliveryKanban = () => {
 
   const fetchAll = async () => {
     try {
-      const [ordersData, deliveriesData, sellersData, customStatusesData] = await Promise.all([
+      const [ordersData, deliveriesData, sellersData, columnsData] = await Promise.all([
         api.orders.list(),
         api.deliveries.list(),
         api.profiles.list(),
@@ -97,7 +96,7 @@ const DeliveryKanban = () => {
       setOrders(ordersData);
       setDeliveries(deliveriesData);
       setSellers(sellersData);
-      setCustomStatuses(customStatusesData.sort((a: any, b: any) => a.display_order - b.display_order));
+      setColumns(columnsData.sort((a: any, b: any) => a.display_order - b.display_order));
     } catch (error) {
       toast.error(error instanceof ApiError ? error.message : "Yuklashda xato");
     } finally {
@@ -176,8 +175,8 @@ const DeliveryKanban = () => {
     });
   }, [statsItems, courierFilter, searchQuery]);
 
-  // Built-in statuses first, then admin-added custom columns appended after them.
-  const allColumnIds = useMemo(() => [...DELIVERY_STATUS_ORDER, ...customStatuses.map((s) => s.id)], [customStatuses]);
+  const visibleColumns = useMemo(() => columns.filter((c) => !c.hidden), [columns]);
+  const allColumnIds = useMemo(() => visibleColumns.map(getColumnStatusKey), [visibleColumns]);
   const visibleStatuses = statusFilter === "all" ? allColumnIds : [statusFilter];
   const groupedByStatus = useMemo(() => {
     const map = new Map<string, DeliveryBoardItem[]>();
@@ -217,7 +216,7 @@ const DeliveryKanban = () => {
 
     if (targetStatus === activeItem.status) return;
 
-    const allowed = getAllowedNextStatuses(activeItem.status, customStatuses);
+    const allowed = getAllowedNextStatuses(activeItem.status, columns);
     if (!allowed.includes(targetStatus)) {
       toast.error("Bu holatga o'tish mumkin emas");
       return;
@@ -237,25 +236,28 @@ const DeliveryKanban = () => {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
 
-    const oldIndex = customStatuses.findIndex((s) => s.id === active.id);
-    const newIndex = customStatuses.findIndex((s) => s.id === over.id);
+    const oldIndex = visibleColumns.findIndex((c) => getColumnStatusKey(c) === active.id);
+    const newIndex = visibleColumns.findIndex((c) => getColumnStatusKey(c) === over.id);
     if (oldIndex === -1 || newIndex === -1) return;
 
-    const reordered = arrayMove(customStatuses, oldIndex, newIndex);
-    setCustomStatuses(reordered);
+    const reordered = arrayMove(visibleColumns, oldIndex, newIndex);
+    setColumns((prev) => {
+      const orderIndex = new Map(reordered.map((c, index) => [c.id, index]));
+      return [...prev].sort((a, b) => (orderIndex.get(a.id) ?? 0) - (orderIndex.get(b.id) ?? 0));
+    });
 
     try {
-      await Promise.all(reordered.map((s, index) => api.deliveryStatuses.update(s.id, { display_order: index + 1 })));
+      await Promise.all(reordered.map((c, index) => api.deliveryStatuses.update(c.id, { display_order: index + 1 })));
     } catch (error) {
       toast.error("Ustunlar tartibini saqlashda xato");
       fetchAll();
     }
   };
 
-  // Custom columns can be dragged to reorder themselves; everything else
-  // dragged is a delivery card changing status.
+  // Any column can be dragged to reorder itself; everything else dragged is a
+  // delivery card changing status.
   const handleBoardDragEnd = (event: DragEndEvent) => {
-    if (customStatuses.some((s) => s.id === event.active.id)) {
+    if (columns.some((c) => getColumnStatusKey(c) === event.active.id)) {
       return handleColumnReorder(event);
     }
     return handleDragEnd(event);
@@ -334,7 +336,7 @@ const DeliveryKanban = () => {
               <SelectItem value="all">Barcha holatlar</SelectItem>
               {allColumnIds.map((s) => (
                 <SelectItem key={s} value={s}>
-                  {getStatusLabel(s, customStatuses)}
+                  {getStatusLabel(s, columns)}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -403,31 +405,20 @@ const DeliveryKanban = () => {
         </div>
 
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleBoardDragEnd}>
-          <SortableContext items={customStatuses.map((s) => s.id)} strategy={horizontalListSortingStrategy}>
+          <SortableContext items={allColumnIds} strategy={horizontalListSortingStrategy}>
             <div className="flex gap-4 overflow-x-auto pb-4">
-              {visibleStatuses.map((status) =>
-                customStatuses.some((s) => s.id === status) ? (
-                  <SortableDeliveryColumn
-                    key={status}
-                    status={status}
-                    items={groupedByStatus.get(status) ?? []}
-                    onCardClick={setSelectedItem}
-                    dragDisabled={!isAdminOrRop}
-                    customStatuses={customStatuses}
-                    canManage={isAdminOrRop}
-                    onColumnDeleted={fetchAll}
-                  />
-                ) : (
-                  <DeliveryColumn
-                    key={status}
-                    status={status}
-                    items={groupedByStatus.get(status) ?? []}
-                    onCardClick={setSelectedItem}
-                    dragDisabled={!isAdminOrRop}
-                    customStatuses={customStatuses}
-                  />
-                ),
-              )}
+              {visibleStatuses.map((status) => (
+                <SortableDeliveryColumn
+                  key={status}
+                  status={status}
+                  items={groupedByStatus.get(status) ?? []}
+                  onCardClick={setSelectedItem}
+                  dragDisabled={!isAdminOrRop}
+                  columns={columns}
+                  canManage={isAdminOrRop}
+                  onColumnDeleted={fetchAll}
+                />
+              ))}
             </div>
           </SortableContext>
         </DndContext>
@@ -441,7 +432,7 @@ const DeliveryKanban = () => {
           onUpdate={fetchAll}
           canEdit={isAdminOrRop}
           usersById={usersById}
-          customStatuses={customStatuses}
+          columns={columns}
         />
       )}
 

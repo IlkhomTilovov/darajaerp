@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
-import { Plus, Pencil, Trash2 } from "lucide-react";
+import { Plus, Pencil, Trash2, Eye, EyeOff } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 
 interface DeliveryStatusManagementProps {
@@ -76,6 +76,21 @@ const DeliveryStatusManagement = ({ onUpdate }: DeliveryStatusManagementProps) =
   const handleEdit = (status: any) => {
     setEditingStatus(status);
     setFormData({ name: status.name, color: status.color });
+  };
+
+  // A built-in column (status.built_in_key set) can never be truly deleted —
+  // its key drives pipeline business logic — so the same action just
+  // toggles "hidden" instead, reversibly, right from this list.
+  const handleToggleHidden = async (status: any) => {
+    try {
+      await api.deliveryStatuses.update(status.id, { hidden: !status.hidden });
+      toast.success(status.hidden ? "Ustun qayta ko'rsatildi" : "Ustun yashirildi");
+      fetchStatuses();
+      onUpdate();
+    } catch (error) {
+      console.error("Error toggling delivery status visibility:", error);
+      toast.error("Ustunni yangilashda xato");
+    }
   };
 
   const handleDelete = async () => {
@@ -153,29 +168,34 @@ const DeliveryStatusManagement = ({ onUpdate }: DeliveryStatusManagementProps) =
           </form>
 
           <div className="border-t pt-4">
-            <h3 className="font-semibold mb-3">Qo'shimcha ustunlar</h3>
-            {statuses.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Hali qo'shimcha ustun yo'q</p>
-            ) : (
-              <div className="space-y-2">
-                {statuses.map((status) => (
-                  <div key={status.id} className="flex items-center justify-between p-3 bg-muted rounded-lg">
-                    <div className="flex items-center gap-3">
-                      <div className={`w-8 h-8 rounded ${status.color}`} />
+            <h3 className="font-semibold mb-3">Barcha ustunlar</h3>
+            <div className="space-y-2">
+              {statuses.map((status) => (
+                <div key={status.id} className={`flex items-center justify-between p-3 rounded-lg ${status.hidden ? "bg-muted/50 opacity-60" : "bg-muted"}`}>
+                  <div className="flex items-center gap-3">
+                    <div className={`w-8 h-8 rounded ${status.color}`} />
+                    <div>
                       <p className="font-medium">{status.name}</p>
+                      {status.built_in_key && <p className="text-xs text-muted-foreground">Asosiy ustun{status.hidden ? " — yashirilgan" : ""}</p>}
                     </div>
-                    <div className="flex gap-2">
-                      <Button size="sm" variant="outline" onClick={() => handleEdit(status)}>
-                        <Pencil className="h-4 w-4" />
+                  </div>
+                  <div className="flex gap-2">
+                    <Button size="sm" variant="outline" onClick={() => handleEdit(status)}>
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                    {status.built_in_key ? (
+                      <Button size="sm" variant="outline" onClick={() => handleToggleHidden(status)}>
+                        {status.hidden ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
                       </Button>
+                    ) : (
                       <Button size="sm" variant="destructive" onClick={() => setDeleteStatusId(status.id)}>
                         <Trash2 className="h-4 w-4" />
                       </Button>
-                    </div>
+                    )}
                   </div>
-                ))}
-              </div>
-            )}
+                </div>
+              ))}
+            </div>
           </div>
         </DialogContent>
       </Dialog>

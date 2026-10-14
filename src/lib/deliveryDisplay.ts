@@ -59,31 +59,46 @@ export const ALLOWED_TRANSITIONS: Record<DeliveryStatus, DeliveryStatus[]> = {
   rejected: [],
 };
 
-export interface CustomDeliveryStatus {
+// One row per Dastavka Kanban column, both built-in and custom — see the
+// server/src/db/schema.ts deliveryStatuses table comment for the full
+// rationale. built_in_key is the literal pipeline key for a built-in column
+// (never renamed) and null for a custom one, whose own `id` is what
+// deliveries.status stores instead.
+export interface DeliveryColumnRow {
   id: string;
+  built_in_key: string | null;
   name: string;
   color: string;
+  display_order: number;
+  hidden: boolean;
 }
+
+// What a column's row is actually matched against in deliveries.status and
+// in drag/drop ids — the built-in key when there is one, else the row's own id.
+export const getColumnStatusKey = (column: DeliveryColumnRow): string => column.built_in_key ?? column.id;
 
 // Admin-added columns (src/components/delivery/DeliveryStatusManagement.tsx)
 // are purely organizational and sit outside the fixed 5-status pipeline, so
 // they're always freely reachable from — and can freely move to — any other
-// column, built-in or custom. The strict ALLOWED_TRANSITIONS rules above only
-// ever apply between two built-in statuses.
-export const getAllowedNextStatuses = (current: string, customStatuses: CustomDeliveryStatus[]): string[] => {
-  const customIds = customStatuses.map((s) => s.id).filter((id) => id !== current);
+// visible column, built-in or custom. The strict ALLOWED_TRANSITIONS rules
+// above only ever apply between two built-in statuses.
+export const getAllowedNextStatuses = (current: string, columns: DeliveryColumnRow[]): string[] => {
+  const visibleKeys = columns.filter((c) => !c.hidden).map(getColumnStatusKey);
+  const nonBuiltInKeys = visibleKeys.filter((key) => key !== current && !(DELIVERY_STATUS_ORDER as string[]).includes(key));
+
   if ((DELIVERY_STATUS_ORDER as string[]).includes(current)) {
-    return [...(ALLOWED_TRANSITIONS[current as DeliveryStatus] ?? []), ...customIds];
+    const builtInNext = (ALLOWED_TRANSITIONS[current as DeliveryStatus] ?? []).filter((key) => visibleKeys.includes(key));
+    return [...builtInNext, ...nonBuiltInKeys];
   }
-  return [...DELIVERY_STATUS_ORDER, ...customIds];
+  return [...visibleKeys.filter((key) => (DELIVERY_STATUS_ORDER as string[]).includes(key)), ...nonBuiltInKeys];
 };
 
-export const getStatusLabel = (status: string, customStatuses: CustomDeliveryStatus[]): string =>
-  DELIVERY_STATUS_META[status as DeliveryStatus]?.label ?? customStatuses.find((s) => s.id === status)?.name ?? status;
+export const getStatusLabel = (status: string, columns: DeliveryColumnRow[]): string =>
+  columns.find((c) => getColumnStatusKey(c) === status)?.name ?? DELIVERY_STATUS_META[status as DeliveryStatus]?.label ?? status;
 
 // Written out as full literal strings (not built via template interpolation)
 // so Tailwind's content scanner actually picks them up — matches the same
-// bg-*-500 palette offered by StageManagement.tsx's COLOR_OPTIONS.
+// bg-*-500 palette offered by DeliveryStatusManagement.tsx's COLOR_OPTIONS.
 const COLOR_BADGE_CLASSES: Record<string, string> = {
   "bg-blue-500": "border-blue-300 bg-blue-50 text-blue-700",
   "bg-green-500": "border-green-300 bg-green-50 text-green-700",
@@ -96,17 +111,18 @@ const COLOR_BADGE_CLASSES: Record<string, string> = {
   "bg-teal-500": "border-teal-300 bg-teal-50 text-teal-700",
 };
 
-export const getStatusMeta = (status: string, customStatuses: CustomDeliveryStatus[]) => {
-  const builtIn = DELIVERY_STATUS_META[status as DeliveryStatus];
-  if (builtIn) return builtIn;
-  const custom = customStatuses.find((s) => s.id === status);
-  if (!custom) return DELIVERY_STATUS_META.ready;
-  return {
-    label: custom.name,
-    headerClassName: custom.color,
-    badgeClassName: COLOR_BADGE_CLASSES[custom.color] ?? "border-border bg-muted text-foreground",
-    dotClassName: custom.color,
-  };
+export const getStatusMeta = (status: string, columns: DeliveryColumnRow[]) => {
+  const column = columns.find((c) => getColumnStatusKey(c) === status);
+  if (column) {
+    return {
+      label: column.name,
+      headerClassName: column.color,
+      badgeClassName: COLOR_BADGE_CLASSES[column.color] ?? "border-border bg-muted text-foreground",
+      dotClassName: column.color,
+    };
+  }
+  // Columns are still loading, or this status predates the columns fetch.
+  return DELIVERY_STATUS_META[status as DeliveryStatus] ?? DELIVERY_STATUS_META.ready;
 };
 
 export const REJECTION_REASON_OPTIONS: { value: string; label: string }[] = [

@@ -77,19 +77,43 @@ export const stages = pgTable("stages", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
-// Admin-defined extra columns for the Dastavka Kanban, appended after the 5
-// fixed built-in delivery statuses (ready/in_transit/delivered/needs_followup/
-// rejected — see src/lib/deliveryDisplay.ts). Purely organizational: unlike
-// the built-ins, reaching a custom column never writes back to orders.status.
-export const deliveryStatuses = pgTable("delivery_statuses", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  companyId: uuid("company_id").references(() => companies.id, { onDelete: "set null" }),
-  name: text("name").notNull(),
-  displayOrder: integer("display_order").notNull(),
-  color: text("color").notNull().default("bg-blue-500"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+// Every Dastavka Kanban column, both the 5 built-in pipeline statuses and
+// admin-added custom columns, as one list controlling display only: name,
+// color, order, and whether a column is shown at all.
+//
+// A built-in row's `builtInKey` is the literal pipeline key ("ready",
+// "in_transit", "delivered", "needs_followup", "rejected") that
+// deliveries.status actually stores and that server/src/routes/deliveries.ts's
+// business logic (rejection-reason requirement, syncing orders.status, the
+// ALLOWED_TRANSITIONS pipeline rules) is keyed off — that key is never
+// renamed. A custom row has `builtInKey: null`; its own random `id` is what
+// deliveries.status stores for it instead. The frontend treats
+// `builtInKey ?? id` as "the column's status key" uniformly for both kinds.
+// Built-in rows are lazily seeded per company (see deliveryStatuses.ts) and
+// can be renamed/recolored/reordered/hidden like any other column, but never
+// actually deleted — "hidden" is the built-in equivalent of a custom column's
+// delete, since the app can't forget a key its pipeline logic depends on.
+export const deliveryStatuses = pgTable(
+  "delivery_statuses",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    companyId: uuid("company_id").references(() => companies.id, { onDelete: "set null" }),
+    builtInKey: text("built_in_key"),
+    name: text("name").notNull(),
+    displayOrder: integer("display_order").notNull(),
+    color: text("color").notNull().default("bg-blue-500"),
+    hidden: boolean("hidden").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    // Prevents a race on the first concurrent GETs for a company from lazily
+    // seeding the same built-in column twice; irrelevant to custom rows,
+    // whose builtInKey is NULL and so never collides under standard SQL NULL
+    // uniqueness semantics.
+    builtInKeyUnique: uniqueIndex("delivery_statuses_company_built_in_key_key").on(table.companyId, table.builtInKey),
+  }),
+);
 
 export const leads = pgTable("leads", {
   id: uuid("id").primaryKey().defaultRandom(),

@@ -16,7 +16,7 @@ import {
   getStatusLabel,
   getStatusMeta,
   PAYMENT_STATUS_META,
-  type CustomDeliveryStatus,
+  type DeliveryColumnRow,
 } from "@/lib/deliveryDisplay";
 import type { DeliveryBoardItem } from "@/pages/delivery/DeliveryKanban";
 
@@ -27,15 +27,15 @@ interface DeliveryDetailDialogProps {
   onUpdate: () => void;
   canEdit: boolean;
   usersById: Map<string, { full_name: string }>;
-  customStatuses: CustomDeliveryStatus[];
+  columns: DeliveryColumnRow[];
 }
 
-const describeHistoryEntry = (entry: any, customStatuses: CustomDeliveryStatus[]): string => {
+const describeHistoryEntry = (entry: any, columns: DeliveryColumnRow[]): string => {
   const meta = entry.metadata || {};
   if (entry.action === "created") return "Yetkazma yaratildi";
   if (entry.action === "status_changed") {
-    const from = getStatusLabel(meta.from, customStatuses);
-    const to = getStatusLabel(meta.to, customStatuses);
+    const from = getStatusLabel(meta.from, columns);
+    const to = getStatusLabel(meta.to, columns);
     let text = `Holat: ${from} → ${to}`;
     if (meta.reason) text += ` (${REJECTION_REASON_OPTIONS.find((r) => r.value === meta.reason)?.label ?? meta.reason})`;
     if (meta.note) text += ` — ${meta.note}`;
@@ -44,7 +44,7 @@ const describeHistoryEntry = (entry: any, customStatuses: CustomDeliveryStatus[]
   return "Ma'lumotlar yangilandi";
 };
 
-const DeliveryDetailDialog = ({ item, open, onOpenChange, onUpdate, canEdit, usersById, customStatuses }: DeliveryDetailDialogProps) => {
+const DeliveryDetailDialog = ({ item, open, onOpenChange, onUpdate, canEdit, usersById, columns }: DeliveryDetailDialogProps) => {
   const [saving, setSaving] = useState(false);
   const [history, setHistory] = useState<any[]>([]);
   const [form, setForm] = useState({
@@ -82,8 +82,8 @@ const DeliveryDetailDialog = ({ item, open, onOpenChange, onUpdate, canEdit, use
     }
   }, [item.orderId, item.deliveryId]);
 
-  const statusMeta = getStatusMeta(item.status, customStatuses);
-  const allowedNext = getAllowedNextStatuses(item.status, customStatuses);
+  const statusMeta = getStatusMeta(item.status, columns);
+  const allowedNext = getAllowedNextStatuses(item.status, columns);
   const payment = getPaymentStatus(item.totalAmount, item.advancePayment);
   const paymentMeta = PAYMENT_STATUS_META[payment];
 
@@ -184,7 +184,7 @@ const DeliveryDetailDialog = ({ item, open, onOpenChange, onUpdate, canEdit, use
                 <SelectItem value={item.status}>{statusMeta.label} (joriy)</SelectItem>
                 {allowedNext.map((s) => (
                   <SelectItem key={s} value={s}>
-                    {getStatusLabel(s, customStatuses)}
+                    {getStatusLabel(s, columns)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -268,7 +268,7 @@ const DeliveryDetailDialog = ({ item, open, onOpenChange, onUpdate, canEdit, use
               {history.map((entry) => (
                 <div key={entry.id} className="flex items-start justify-between gap-2 text-xs">
                   <div>
-                    <p>{describeHistoryEntry(entry, customStatuses)}</p>
+                    <p>{describeHistoryEntry(entry, columns)}</p>
                     <p className="text-muted-foreground">{usersById.get(entry.actor_id)?.full_name ?? "Noma'lum"}</p>
                   </div>
                   <span className="shrink-0 text-muted-foreground">{format(new Date(entry.created_at), "dd.MM.yyyy HH:mm")}</span>
