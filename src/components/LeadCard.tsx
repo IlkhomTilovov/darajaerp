@@ -30,7 +30,7 @@ const LeadCard = ({ lead, isDragging, onClick, stage, stages, onLeadUpdate }: Le
     >
       <CardContent className="space-y-2.5 p-3.5">
         <div className="flex items-start justify-between gap-2">
-          <h3 className="truncate text-sm font-semibold leading-tight">{lead.customer_name}</h3>
+          <h3 className="min-w-0 truncate text-sm font-semibold leading-tight">{lead.customer_name}</h3>
           {lead.lead_type && (
             <Badge variant="outline" className={`shrink-0 whitespace-nowrap text-[10px] ${typeStyle.badgeClassName}`}>
               {lead.lead_type}
@@ -39,7 +39,7 @@ const LeadCard = ({ lead, isDragging, onClick, stage, stages, onLeadUpdate }: Le
         </div>
 
         {lead.customer_phone && (
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
             <Phone className="h-3.5 w-3.5 shrink-0" />
             <span className="truncate">{lead.customer_phone}</span>
           </div>
