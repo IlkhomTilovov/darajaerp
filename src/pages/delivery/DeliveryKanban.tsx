@@ -3,6 +3,7 @@ import { api, ApiError } from "@/lib/api";
 import DashboardLayout from "@/components/DashboardLayout";
 import DashboardStatCard from "@/components/dashboard/DashboardStatCard";
 import DeliveryColumn from "@/components/delivery/DeliveryColumn";
+import SortableDeliveryColumn from "@/components/delivery/SortableDeliveryColumn";
 import DeliveryDetailDialog from "@/components/delivery/DeliveryDetailDialog";
 import DeliveryStatusManagement from "@/components/delivery/DeliveryStatusManagement";
 import { Input } from "@/components/ui/input";
@@ -14,6 +15,7 @@ import { Calendar } from "@/components/ui/calendar";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { DndContext, DragEndEvent, PointerSensor, closestCenter, useSensor, useSensors } from "@dnd-kit/core";
+import { SortableContext, horizontalListSortingStrategy, arrayMove } from "@dnd-kit/sortable";
 import { Truck, Package, Navigation, CheckCircle2, PhoneCall, XCircle, Search, SlidersHorizontal, Calendar as CalendarIcon } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
@@ -231,6 +233,34 @@ const DeliveryKanban = () => {
     commitStatusChange(activeItem, { status: targetStatus });
   };
 
+  const handleColumnReorder = async (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    const oldIndex = customStatuses.findIndex((s) => s.id === active.id);
+    const newIndex = customStatuses.findIndex((s) => s.id === over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+
+    const reordered = arrayMove(customStatuses, oldIndex, newIndex);
+    setCustomStatuses(reordered);
+
+    try {
+      await Promise.all(reordered.map((s, index) => api.deliveryStatuses.update(s.id, { display_order: index + 1 })));
+    } catch (error) {
+      toast.error("Ustunlar tartibini saqlashda xato");
+      fetchAll();
+    }
+  };
+
+  // Custom columns can be dragged to reorder themselves; everything else
+  // dragged is a delivery card changing status.
+  const handleBoardDragEnd = (event: DragEndEvent) => {
+    if (customStatuses.some((s) => s.id === event.active.id)) {
+      return handleColumnReorder(event);
+    }
+    return handleDragEnd(event);
+  };
+
   const confirmReject = async () => {
     if (!pendingReject) return;
     if (!rejectReason) {
@@ -372,19 +402,34 @@ const DeliveryKanban = () => {
           </Popover>
         </div>
 
-        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-          <div className="flex gap-4 overflow-x-auto pb-4">
-            {visibleStatuses.map((status) => (
-              <DeliveryColumn
-                key={status}
-                status={status}
-                items={groupedByStatus.get(status) ?? []}
-                onCardClick={setSelectedItem}
-                dragDisabled={!isAdminOrRop}
-                customStatuses={customStatuses}
-              />
-            ))}
-          </div>
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleBoardDragEnd}>
+          <SortableContext items={customStatuses.map((s) => s.id)} strategy={horizontalListSortingStrategy}>
+            <div className="flex gap-4 overflow-x-auto pb-4">
+              {visibleStatuses.map((status) =>
+                customStatuses.some((s) => s.id === status) ? (
+                  <SortableDeliveryColumn
+                    key={status}
+                    status={status}
+                    items={groupedByStatus.get(status) ?? []}
+                    onCardClick={setSelectedItem}
+                    dragDisabled={!isAdminOrRop}
+                    customStatuses={customStatuses}
+                    canManage={isAdminOrRop}
+                    onColumnDeleted={fetchAll}
+                  />
+                ) : (
+                  <DeliveryColumn
+                    key={status}
+                    status={status}
+                    items={groupedByStatus.get(status) ?? []}
+                    onCardClick={setSelectedItem}
+                    dragDisabled={!isAdminOrRop}
+                    customStatuses={customStatuses}
+                  />
+                ),
+              )}
+            </div>
+          </SortableContext>
         </DndContext>
       </div>
 
