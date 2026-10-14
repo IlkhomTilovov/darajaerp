@@ -25,7 +25,7 @@ const LeadCard = ({ lead, isDragging, onClick, stage, stages, onLeadUpdate }: Le
 
   return (
     <Card
-      className={`cursor-pointer border-border/70 transition-shadow hover:shadow-md ${isDragging ? "opacity-50" : ""}`}
+      className={`cursor-pointer overflow-hidden border-border/70 transition-shadow hover:shadow-md ${isDragging ? "opacity-50" : ""}`}
       onClick={onClick}
     >
       <CardContent className="space-y-2.5 p-3.5">
