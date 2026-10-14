@@ -116,7 +116,7 @@ router.patch(
             .insert(schema.orders)
             .values({
               companyId: existing.companyId,
-              sellerId: existing.sellerId,
+              sellerId: row.sellerId,
               leadId: row.id,
               customerName: existing.customerName,
               customerPhone: existing.customerPhone,
@@ -127,7 +127,7 @@ router.patch(
           recordActivity({
             companyId: existing.companyId,
             actorId: user.id,
-            subjectUserId: existing.sellerId,
+            subjectUserId: row.sellerId,
             entityType: "order",
             entityId: order.id,
             action: "created_from_lead",
@@ -152,6 +152,24 @@ router.patch(
           .update(schema.orders)
           .set({ totalAmount: String(price), updatedAt: new Date() })
           .where(eq(schema.orders.id, linkedOrder.id));
+      }
+    }
+
+    // Reassigning a lead to a different seller should carry its order along
+    // too, otherwise the order (and its "Barcha zakazlar" / Dastavka entry)
+    // keeps showing up for whoever the lead was assigned to when it was sold,
+    // not the seller it was just handed to.
+    if (rest.sellerId && rest.sellerId !== existing.sellerId) {
+      const [orderToReassign] = await db
+        .select({ id: schema.orders.id })
+        .from(schema.orders)
+        .where(eq(schema.orders.leadId, row.id))
+        .limit(1);
+      if (orderToReassign) {
+        await db
+          .update(schema.orders)
+          .set({ sellerId: rest.sellerId, updatedAt: new Date() })
+          .where(eq(schema.orders.id, orderToReassign.id));
       }
     }
 
