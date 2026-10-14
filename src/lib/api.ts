@@ -82,6 +82,12 @@ export const api = {
     update: (id: string, data: any) => patch<any>(`/delivery-statuses/${id}`, data),
     remove: (id: string) => del<void>(`/delivery-statuses/${id}`),
   },
+  couriers: {
+    list: () => get<any[]>("/couriers"),
+    create: (data: any) => post<any>("/couriers", data),
+    update: (id: string, data: any) => patch<any>(`/couriers/${id}`, data),
+    remove: (id: string) => del<void>(`/couriers/${id}`),
+  },
   leads: {
     list: () => get<any[]>("/leads"),
     get: (id: string) => get<any>(`/leads/${id}`),

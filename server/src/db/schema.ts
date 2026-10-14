@@ -276,6 +276,21 @@ export const activityLog = pgTable("activity_log", {
 // without a partial index this project's drizzle-kit push workflow doesn't manage).
 // One delivery row per order, tracking it through the 5-stage Kanban
 // (ready -> in_transit -> delivered / needs_followup / rejected). Courier is
+// A lightweight courier registry: name + phone only, no login/auth/role —
+// couriers aren't app users. Exists purely so admin/rop can manage a reusable
+// list from one place instead of retyping a courier's details on every
+// delivery; deliveries.courierName/courierPhone below stay plain free-text
+// columns (no FK to this table), consistent with the "not a user/role"
+// design this module already had before couriers got their own page.
+export const couriers = pgTable("couriers", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  companyId: uuid("company_id").references(() => companies.id, { onDelete: "set null" }),
+  name: text("name").notNull(),
+  phone: text("phone"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 // intentionally a free-text name, not a user/role, per the simplified spec —
 // this module deliberately has no separate KPI system.
 export const deliveries = pgTable("deliveries", {

@@ -47,6 +47,7 @@ const describeHistoryEntry = (entry: any, columns: DeliveryColumnRow[]): string 
 const DeliveryDetailDialog = ({ item, open, onOpenChange, onUpdate, canEdit, usersById, columns }: DeliveryDetailDialogProps) => {
   const [saving, setSaving] = useState(false);
   const [history, setHistory] = useState<any[]>([]);
+  const [couriers, setCouriers] = useState<any[]>([]);
   const [form, setForm] = useState({
     status: item.status,
     courierName: item.courierName ?? "",
@@ -81,6 +82,16 @@ const DeliveryDetailDialog = ({ item, open, onOpenChange, onUpdate, canEdit, use
       setHistory([]);
     }
   }, [item.orderId, item.deliveryId]);
+
+  useEffect(() => {
+    if (open) api.couriers.list().then(setCouriers).catch(() => setCouriers([]));
+  }, [open]);
+
+  const handleSelectCourier = (courierId: string) => {
+    const courier = couriers.find((c) => c.id === courierId);
+    if (!courier) return;
+    setForm((prev) => ({ ...prev, courierName: courier.name, courierPhone: courier.phone || "" }));
+  };
 
   const statusMeta = getStatusMeta(item.status, columns);
   const allowedNext = getAllowedNextStatuses(item.status, columns);
@@ -190,6 +201,25 @@ const DeliveryDetailDialog = ({ item, open, onOpenChange, onUpdate, canEdit, use
               </SelectContent>
             </Select>
           </div>
+
+          {couriers.length > 0 && (
+            <div>
+              <Label className="mb-1.5 block text-xs text-muted-foreground">Ro'yxatdan kuryer tanlash</Label>
+              <Select onValueChange={handleSelectCourier} disabled={!canEdit}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Kuryerni tanlang" />
+                </SelectTrigger>
+                <SelectContent>
+                  {couriers.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.name}
+                      {c.phone ? ` — ${c.phone}` : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-4">
             <div>

@@ -19,6 +19,7 @@ import {
   ChevronRight,
   ChevronsLeft,
   Truck,
+  Bike,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useUserRoles } from "@/hooks/useUserRoles";
@@ -177,7 +178,10 @@ const DashboardLayout = ({ children, headerExtra }: DashboardLayoutProps) => {
       : []),
     {
       label: "Dastavka",
-      items: [{ path: "/delivery", icon: Truck, label: "Dastavka" }],
+      items: [
+        { path: "/delivery", icon: Truck, label: "Dastavka" },
+        { path: "/delivery/couriers", icon: Bike, label: "Kuryerlar" },
+      ],
     },
     {
       label: "Tizim",
