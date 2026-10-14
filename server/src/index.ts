@@ -71,8 +71,13 @@ app.use("/api/kpi-targets", kpiTargetsRoutes);
 app.use("/api/deliveries", deliveriesRoutes);
 app.use("/api/delivery-statuses", deliveryStatusesRoutes);
 app.use("/api/couriers", couriersRoutes);
-app.use("/api/integrations/telegram", telegramRoutes);
+// telegramWebhookRoutes (public, no auth — Telegram itself calls /webhook) must be
+// mounted BEFORE telegramRoutes: both share this exact path prefix, and
+// telegramRoutes' blanket requireAuth middleware would otherwise intercept and
+// reject every request under the prefix, including /webhook, before Express ever
+// tries telegramWebhookRoutes' own (unauthenticated) route for it.
 app.use("/api/integrations/telegram", telegramWebhookRoutes);
+app.use("/api/integrations/telegram", telegramRoutes);
 app.use("/api/integrations/sheets", sheetsRoutes);
 app.use("/api/integrations/sheets", sheetsWebhookRoutes);
 app.use("/api/integrations/facebook", facebookWebhookRoutes);
