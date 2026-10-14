@@ -223,12 +223,24 @@ router.post(
     // in the configured group if one is set - keeps this from misfiring on
     // ordinary conversation in a group our bot happens to sit in.
     const leadsChatId = process.env.TELEGRAM_LEADS_CHAT_ID;
+    if (body.message) {
+      console.log(
+        "[telegram] xabar qabul qilindi:",
+        JSON.stringify({
+          chatId: body.message.chat?.id,
+          fromIsBot: body.message.from?.is_bot,
+          fromUsername: body.message.from?.username,
+          textPreview: (body.message.text || "").slice(0, 80),
+        }),
+      );
+    }
     if (
       body.message?.from?.is_bot &&
       body.message?.text &&
       (!leadsChatId || String(body.message.chat?.id) === leadsChatId)
     ) {
       const fields = parseLeadMessage(body.message.text);
+      console.log("[telegram] parseLeadMessage natijasi:", JSON.stringify(fields));
       if (fields) {
         const telegramLeadId = `${body.message.chat.id}:${body.message.message_id}`;
         try {
