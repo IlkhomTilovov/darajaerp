@@ -231,6 +231,8 @@ router.post(
           fromIsBot: body.message.from?.is_bot,
           fromUsername: body.message.from?.username,
           textPreview: (body.message.text || "").slice(0, 80),
+          hasWebAppData: !!body.message.web_app_data,
+          webAppData: body.message.web_app_data,
         }),
       );
     }
