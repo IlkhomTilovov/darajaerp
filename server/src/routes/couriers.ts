@@ -22,6 +22,7 @@ router.get(
 const courierSchema = z.object({
   name: z.string().min(1),
   phone: z.string().optional(),
+  region: z.string().optional(),
 });
 
 router.post(

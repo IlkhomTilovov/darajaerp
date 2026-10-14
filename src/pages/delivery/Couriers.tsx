@@ -6,10 +6,12 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Bike, Plus, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { regionsData } from "@/lib/regions";
 
 const Couriers = () => {
   const { isAdminOrRop } = useUserRoles();
@@ -18,7 +20,7 @@ const Couriers = () => {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingCourier, setEditingCourier] = useState<any>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
-  const [formData, setFormData] = useState({ name: "", phone: "" });
+  const [formData, setFormData] = useState({ name: "", phone: "", region: "" });
 
   useEffect(() => {
     fetchCouriers();
@@ -44,11 +46,12 @@ const Couriers = () => {
     }
 
     try {
+      const payload = { name: formData.name, phone: formData.phone || null, region: formData.region || null };
       if (editingCourier) {
-        await api.couriers.update(editingCourier.id, { name: formData.name, phone: formData.phone || null });
+        await api.couriers.update(editingCourier.id, payload);
         toast.success("Kuryer yangilandi");
       } else {
-        await api.couriers.create({ name: formData.name, phone: formData.phone || null });
+        await api.couriers.create(payload);
         toast.success("Kuryer qo'shildi");
       }
       closeDialog();
@@ -60,7 +63,7 @@ const Couriers = () => {
 
   const handleEdit = (courier: any) => {
     setEditingCourier(courier);
-    setFormData({ name: courier.name, phone: courier.phone || "" });
+    setFormData({ name: courier.name, phone: courier.phone || "", region: courier.region || "" });
     setDialogOpen(true);
   };
 
@@ -79,7 +82,7 @@ const Couriers = () => {
   const closeDialog = () => {
     setDialogOpen(false);
     setEditingCourier(null);
-    setFormData({ name: "", phone: "" });
+    setFormData({ name: "", phone: "", region: "" });
   };
 
   return (
@@ -125,6 +128,21 @@ const Couriers = () => {
                       placeholder="+998 XX XXX XX XX"
                     />
                   </div>
+                  <div>
+                    <Label htmlFor="courier-region">Viloyat</Label>
+                    <Select value={formData.region} onValueChange={(value) => setFormData({ ...formData, region: value })}>
+                      <SelectTrigger id="courier-region">
+                        <SelectValue placeholder="Viloyatni tanlang" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {Object.keys(regionsData).map((regionName) => (
+                          <SelectItem key={regionName} value={regionName}>
+                            {regionName}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                   <Button type="submit" className="w-full">
                     {editingCourier ? "Yangilash" : "Qo'shish"}
                   </Button>
@@ -140,19 +158,20 @@ const Couriers = () => {
               <TableRow>
                 <TableHead>Ism</TableHead>
                 <TableHead>Telefon</TableHead>
+                <TableHead>Viloyat</TableHead>
                 {isAdminOrRop && <TableHead className="text-right">Amallar</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
               {loading ? (
                 <TableRow>
-                  <TableCell colSpan={3} className="py-8 text-center text-muted-foreground">
+                  <TableCell colSpan={4} className="py-8 text-center text-muted-foreground">
                     Yuklanmoqda...
                   </TableCell>
                 </TableRow>
               ) : couriers.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={3} className="py-8 text-center text-muted-foreground">
+                  <TableCell colSpan={4} className="py-8 text-center text-muted-foreground">
                     Hozircha kuryer yo'q
                   </TableCell>
                 </TableRow>
@@ -161,6 +180,7 @@ const Couriers = () => {
                   <TableRow key={courier.id}>
                     <TableCell className="font-medium">{courier.name}</TableCell>
                     <TableCell className="text-muted-foreground">{courier.phone || "—"}</TableCell>
+                    <TableCell className="text-muted-foreground">{courier.region || "—"}</TableCell>
                     {isAdminOrRop && (
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">

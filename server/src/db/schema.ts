@@ -287,6 +287,7 @@ export const couriers = pgTable("couriers", {
   companyId: uuid("company_id").references(() => companies.id, { onDelete: "set null" }),
   name: text("name").notNull(),
   phone: text("phone"),
+  region: text("region"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
