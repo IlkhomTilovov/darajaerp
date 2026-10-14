@@ -56,8 +56,10 @@ const LeadColumn = ({ stage, title, leads, color, onLeadClick, stageData, stages
           {/* Radix wraps this child in an internal display:table div for horizontal-scroll
               measurement, which sizes to content instead of the viewport unless a child
               pins a fixed width — without it, a non-shrinking badge anywhere inside could
-              balloon every card in the column past the 300px column width. */}
-          <div ref={setNodeRef} className="w-[280px] space-y-2.5 p-2.5">
+              balloon every card in the column past the 300px column width. mx-auto centers
+              it within that table wrapper, since a fixed width alone left it hugging the
+              left edge with all the slack piling up on the right. */}
+          <div ref={setNodeRef} className="mx-auto w-[294px] space-y-2.5 p-2.5">
             <SortableContext items={leads.map((l) => l.id)} strategy={verticalListSortingStrategy}>
               {leads.map((lead) => (
                 <SortableLeadCard

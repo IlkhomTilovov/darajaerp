@@ -29,7 +29,7 @@ const SortableLeadCard = ({ lead, onClick, stage, stages, onStageChange }: Sorta
     <div
       ref={setNodeRef}
       style={style}
-      className="mx-auto w-[98%]"
+      className="w-full"
       {...attributes}
       {...listeners}
       onClick={(e) => {
