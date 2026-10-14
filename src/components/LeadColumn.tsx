@@ -52,7 +52,7 @@ const LeadColumn = ({ stage, title, leads, color, onLeadClick, stageData, stages
       </div>
 
       <Card className="flex-1 overflow-hidden rounded-t-none border-t-0 bg-muted/30">
-        <ScrollArea className="h-[calc(100vh-320px)]">
+        <ScrollArea className="h-[var(--kanban-col-h,calc(100vh_-_320px))]">
           <div ref={setNodeRef} className="space-y-2.5 p-2.5">
             <SortableContext items={leads.map((l) => l.id)} strategy={verticalListSortingStrategy}>
               {leads.map((lead) => (

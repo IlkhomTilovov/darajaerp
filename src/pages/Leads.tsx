@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
@@ -73,6 +73,8 @@ const Leads = () => {
   const [selectedLead, setSelectedLead] = useState<any>(null);
   const [detailsDialogOpen, setDetailsDialogOpen] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
+  const filtersRowRef = useRef<HTMLDivElement>(null);
+  const [kanbanColHeight, setKanbanColHeight] = useState<number | null>(null);
   const [pendingStageChange, setPendingStageChange] = useState<{
     leadId: string;
     leadName: string;
@@ -121,6 +123,32 @@ const Leads = () => {
       setFormData((prev) => ({ ...prev, stage: muhimStage.id }));
     }
   }, [muhimStage]);
+
+  // Kanban columns size themselves to whatever vertical space is actually left below the
+  // filters row, instead of a fixed guess — keeps all cards reachable without the column
+  // cutting off before the real viewport edge whenever the filters row wraps to extra lines.
+  useLayoutEffect(() => {
+    if (viewMode !== "kanban") return;
+    const filtersEl = filtersRowRef.current;
+    if (!filtersEl) return;
+
+    const MAIN_BOTTOM_PADDING = 64; // <main> py-8 + the board's own pb-4, plus a little breathing room
+
+    const recompute = () => {
+      const bottom = filtersEl.getBoundingClientRect().bottom;
+      const available = window.innerHeight - bottom - MAIN_BOTTOM_PADDING;
+      setKanbanColHeight(Math.max(available, 280));
+    };
+
+    recompute();
+    const observer = new ResizeObserver(recompute);
+    observer.observe(filtersEl);
+    window.addEventListener("resize", recompute);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", recompute);
+    };
+  }, [viewMode]);
 
   // Handle opening specific lead from URL parameter
   useEffect(() => {
@@ -707,7 +735,7 @@ const Leads = () => {
         </div>
       </div>
 
-      <div className="mb-6 flex flex-wrap items-center gap-2">
+      <div ref={filtersRowRef} className="mb-6 flex flex-wrap items-center gap-2">
         <LeadsViewTabs value={viewMode} onChange={setViewMode} />
 
         {isAdminOrRop && (
@@ -867,7 +895,10 @@ const Leads = () => {
           onDragEnd={handleStageDragEnd}
         >
           <SortableContext items={stages.map(s => s.id)} strategy={horizontalListSortingStrategy}>
-            <div className="flex gap-4 overflow-x-auto pb-4">
+            <div
+              className="flex gap-4 overflow-x-auto pb-4"
+              style={kanbanColHeight ? ({ "--kanban-col-h": `${kanbanColHeight}px` } as React.CSSProperties) : undefined}
+            >
               {stages.map((stage) => (
                 <SortableStageColumn
                   key={stage.id}
