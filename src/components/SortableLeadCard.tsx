@@ -26,10 +26,11 @@ const SortableLeadCard = ({ lead, onClick, stage, stages, onStageChange }: Sorta
   };
 
   return (
-    <div 
-      ref={setNodeRef} 
-      style={style} 
-      {...attributes} 
+    <div
+      ref={setNodeRef}
+      style={style}
+      className="mx-auto w-[90%]"
+      {...attributes}
       {...listeners}
       onClick={(e) => {
         e.stopPropagation();
