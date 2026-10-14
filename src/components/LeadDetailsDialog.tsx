@@ -10,7 +10,7 @@ import { api, ApiError } from "@/lib/api";
 import { toast } from "sonner";
 import { useUserRoles } from "@/hooks/useUserRoles";
 import { format } from "date-fns";
-import { CalendarIcon, User, Phone, DollarSign, Facebook, CheckCircle2, Clock, Plus, MessageSquare, Trash2, Truck, Package, X } from "lucide-react";
+import { CalendarIcon, User, Phone, DollarSign, Facebook, Send, CheckCircle2, Clock, Plus, MessageSquare, Trash2, Truck, Package, X } from "lucide-react";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
@@ -417,6 +417,29 @@ const LeadDetailsDialog = ({ lead, open, onOpenChange, onUpdate, sellers, stages
                     <div key={index} className="text-sm">
                       <p className="text-blue-900/70 dark:text-blue-100/70">{item.question}</p>
                       <p className="font-medium text-blue-900 dark:text-blue-100">{item.answer}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Telegram Mini App order form data */}
+          {lead?.source?.toLowerCase() === 'telegram' && (
+            <div className="p-4 bg-sky-50 dark:bg-sky-950/20 rounded-lg border border-sky-200 dark:border-sky-800">
+              <div className="flex items-center gap-2 mb-2">
+                <Send className="h-5 w-5 text-sky-600" />
+                <h3 className="font-semibold text-sky-900 dark:text-sky-100">Telegram buyurtma</h3>
+              </div>
+              <p className="text-sm text-sky-700 dark:text-sky-300">
+                Bu lid Telegram bot orqali kelgan
+              </p>
+              {Array.isArray(lead?.telegram_form_answers) && lead.telegram_form_answers.length > 0 && (
+                <div className="mt-3 space-y-2 border-t border-sky-200 pt-3 dark:border-sky-800">
+                  {lead.telegram_form_answers.map((item: { question: string; answer: string }, index: number) => (
+                    <div key={index} className="text-sm">
+                      <p className="text-sky-900/70 dark:text-sky-100/70">{item.question}</p>
+                      <p className="font-medium text-sky-900 dark:text-sky-100">{item.answer}</p>
                     </div>
                   ))}
                 </div>

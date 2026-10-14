@@ -1,4 +1,6 @@
 import { Router } from "express";
+import { asc, eq, inArray } from "drizzle-orm";
+import { db, schema } from "../../db/index.js";
 import { asyncHandler } from "../../lib/asyncHandler.js";
 import { generateSalesReport, getAdminTelegramRecipients } from "../../lib/salesReport.js";
 
@@ -12,6 +14,99 @@ const tg = (botToken: string, method: string, body: unknown) =>
   });
 
 const UZ_MONTHS = ["Yanvar", "Fevral", "Mart", "Aprel", "May", "Iyun", "Iyul", "Avgust", "Sentyabr", "Oktyabr", "Noyabr", "Dekabr"];
+
+// ----------------------------------------------------- Telegram lead capture
+//
+// A separate bot/service ("Daraja Web sayt Lid") posts a structured message
+// into a group whenever the Telegram Mini App order form is submitted. Our
+// own bot (TELEGRAM_BOT_TOKEN, webhooked here) just needs to be a member of
+// that same group with Group Privacy turned OFF in BotFather to receive
+// those messages as regular `message` updates, same chat as anyone else's -
+// we don't control or run the posting bot itself.
+
+const normalizePhone = (raw?: string | null) => (raw ? raw.replace(/\D/g, "") || null : null);
+
+const LEAD_MESSAGE_FIELDS: { key: "name" | "phone" | "company" | "employees" | "books"; label: string; pattern: RegExp }[] = [
+  { key: "name", label: "Ism", pattern: /Ism:\s*(.+)/ },
+  { key: "phone", label: "Telefon", pattern: /Telefon(?:\s*raqami)?:\s*(.+)/ },
+  { key: "company", label: "Kompaniya", pattern: /Kompaniya(?:\s*nomi)?:\s*(.+)/ },
+  { key: "employees", label: "Xodimlar soni", pattern: /Xodimlar\s*soni:\s*(.+)/ },
+  { key: "books", label: "Kitoblar", pattern: /Kitoblar:\s*(.+)/ },
+];
+
+function parseLeadMessage(text: string) {
+  if (!text || !text.includes("Yangi buyurtma")) return null;
+
+  const fields: Record<string, string> = {};
+  for (const line of text.split("\n")) {
+    for (const field of LEAD_MESSAGE_FIELDS) {
+      const match = line.match(field.pattern);
+      if (match) fields[field.key] = match[1].trim();
+    }
+  }
+
+  if (!fields.name || !fields.phone) return null;
+  return fields;
+}
+
+async function resolveSellerId(): Promise<string | null> {
+  const rows = await db
+    .select({ userId: schema.userRoles.userId })
+    .from(schema.userRoles)
+    .where(inArray(schema.userRoles.role, ["admin", "rop"]))
+    .limit(1);
+  return rows[0]?.userId ?? null;
+}
+
+// Mirrors facebookWebhook.ts's resolveFirstStageId: leads.stage's text default
+// ("yengi_mijoz") matches no real stage UUID, so the first kanban column is
+// picked explicitly — otherwise the lead exists but shows in no column.
+async function resolveFirstStageId(): Promise<string | null> {
+  const rows = await db
+    .select({ id: schema.stages.id })
+    .from(schema.stages)
+    .orderBy(asc(schema.stages.displayOrder))
+    .limit(1);
+  return rows[0]?.id ?? null;
+}
+
+async function alreadySaved(telegramLeadId: string) {
+  const rows = await db.select({ id: schema.leads.id }).from(schema.leads).where(eq(schema.leads.telegramLeadId, telegramLeadId)).limit(1);
+  return rows.length > 0;
+}
+
+async function handleLeadMessage(telegramLeadId: string, fields: Record<string, string>) {
+  if (await alreadySaved(telegramLeadId)) return;
+
+  const sellerId = await resolveSellerId();
+  if (!sellerId) {
+    console.error("[telegram] admin/rop roli topilmadi — lid biriktirib bo'lmadi");
+    return;
+  }
+  const stageId = await resolveFirstStageId();
+
+  const formAnswers = [
+    fields.company ? { question: "Kompaniya", answer: fields.company } : null,
+    fields.employees ? { question: "Xodimlar soni", answer: fields.employees } : null,
+    fields.books ? { question: "Kitoblar", answer: fields.books } : null,
+  ].filter((a): a is { question: string; answer: string } => a !== null);
+
+  await db.insert(schema.leads).values({
+    sellerId,
+    customerName: fields.name,
+    customerPhone: fields.phone,
+    customerPhoneNorm: normalizePhone(fields.phone),
+    leadType: "Yangi lid",
+    activity: "new",
+    source: "Telegram",
+    telegramLeadId,
+    telegramFormAnswers: formAnswers.length ? formAnswers : null,
+    status: "new",
+    ...(stageId ? { stage: stageId } : {}),
+  });
+
+  console.log(`[telegram] yangi lid saqlandi: ${telegramLeadId} (${fields.name})`);
+}
 
 async function sendMainMenu(botToken: string, chatId: number, messageId?: number) {
   const menuText = `📊 <b>Savdo Hisoboti</b>\n\nQuyidagi variantlardan birini tanlang:`;
@@ -121,6 +216,28 @@ router.post(
       }
 
       return res.json({ success: true });
+    }
+
+    // Lead capture: only messages posted by a bot (the lead-posting service,
+    // never a human chatting in the same group) are ever considered, and only
+    // in the configured group if one is set - keeps this from misfiring on
+    // ordinary conversation in a group our bot happens to sit in.
+    const leadsChatId = process.env.TELEGRAM_LEADS_CHAT_ID;
+    if (
+      body.message?.from?.is_bot &&
+      body.message?.text &&
+      (!leadsChatId || String(body.message.chat?.id) === leadsChatId)
+    ) {
+      const fields = parseLeadMessage(body.message.text);
+      if (fields) {
+        const telegramLeadId = `${body.message.chat.id}:${body.message.message_id}`;
+        try {
+          await handleLeadMessage(telegramLeadId, fields);
+        } catch (err) {
+          console.error("[telegram] lid saqlashda xato:", err);
+        }
+        return res.json({ success: true });
+      }
     }
 
     if (body.message?.text === "/start") {

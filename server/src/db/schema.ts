@@ -131,6 +131,10 @@ export const leads = pgTable("leads", {
   notes: text("notes"),
   facebookLeadId: text("facebook_lead_id").unique(),
   facebookFormAnswers: jsonb("facebook_form_answers"),
+  // Dedup key for a Telegram-captured lead: "<chat_id>:<message_id>" of the
+  // group message it was parsed from — mirrors facebookLeadId's role.
+  telegramLeadId: text("telegram_lead_id").unique(),
+  telegramFormAnswers: jsonb("telegram_form_answers"),
   activity: text("activity"),
   employee: text("employee"),
   leadType: text("lead_type"),
