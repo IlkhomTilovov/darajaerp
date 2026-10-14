@@ -45,10 +45,13 @@ const DeliveryColumn = ({ status, items, onCardClick, dragDisabled, columns, can
 
   return (
     <div className="flex h-full min-w-[300px] flex-col">
-      <div className={`rounded-t-xl p-3.5 ${meta.headerClassName}`}>
+      <div
+        {...(canManage ? dragHandleProps : {})}
+        className={`rounded-t-xl p-3.5 ${meta.headerClassName} ${canManage ? "cursor-grab active:cursor-grabbing" : ""}`}
+      >
         <div className="flex items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-1.5">
-            {canManage && <GripVertical {...dragHandleProps} className="h-4 w-4 shrink-0 cursor-grab text-white/50 active:cursor-grabbing" />}
+            {canManage && <GripVertical className="h-4 w-4 shrink-0 text-white/50" />}
             <h2 className="truncate font-semibold text-white">{meta.label}</h2>
             <Badge variant="secondary" className="h-5 min-w-[20px] shrink-0 justify-center rounded-full border-0 bg-white/25 px-1.5 text-xs text-white">
               {items.length}
@@ -58,6 +61,7 @@ const DeliveryColumn = ({ status, items, onCardClick, dragDisabled, columns, can
             <button
               type="button"
               onClick={() => setConfirmDelete(true)}
+              onPointerDown={(e) => e.stopPropagation()}
               className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-white/85 transition-colors hover:bg-white/20 hover:text-white"
             >
               <X className="h-4 w-4" />
