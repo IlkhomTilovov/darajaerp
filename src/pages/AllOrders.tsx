@@ -1360,13 +1360,22 @@ const AllOrders = () => {
                   </div>
                   <div>
                     <Label htmlFor="edit_advance_payment">Oldindan to'lov</Label>
-                    <Input
-                      id="edit_advance_payment"
-                      type="number"
-                      value={editFormData.advance_payment}
-                      onChange={(e) => setEditFormData({ ...editFormData, advance_payment: parseFloat(e.target.value) || 0 })}
-                      placeholder="0"
-                    />
+                    <div className="flex gap-2">
+                      <Input
+                        id="edit_advance_payment"
+                        type="number"
+                        value={editFormData.advance_payment}
+                        onChange={(e) => setEditFormData({ ...editFormData, advance_payment: parseFloat(e.target.value) || 0 })}
+                        placeholder="0"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => setEditFormData({ ...editFormData, advance_payment: editFormData.total_amount })}
+                      >
+                        To'landi
+                      </Button>
+                    </div>
                   </div>
                 </div>
 
