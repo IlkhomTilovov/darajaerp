@@ -6,11 +6,13 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { api, ApiError } from "@/lib/api";
 import { toast } from "sonner";
 import { useUserRoles } from "@/hooks/useUserRoles";
 import { format } from "date-fns";
-import { CalendarIcon, User, Phone, DollarSign, Facebook, Send, CheckCircle2, Clock, Plus, MessageSquare, Trash2, Truck, Package, X } from "lucide-react";
+import { CalendarIcon, User, Phone, DollarSign, Facebook, Send, CheckCircle2, Clock, Plus, MessageSquare, Trash2, Truck, Package, X, ChevronsUpDown } from "lucide-react";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
@@ -39,7 +41,8 @@ const LeadDetailsDialog = ({ lead, open, onOpenChange, onUpdate, sellers, stages
   const [price, setPrice] = useState(lead?.price?.toString() || "");
   const [notes, setNotes] = useState(lead?.notes || "");
   const [deliveryStatus, setDeliveryStatus] = useState(lead?.delivery_status || "");
-  const [selectedProduct, setSelectedProduct] = useState(lead?.product_name || "");
+  const [selectedProducts, setSelectedProducts] = useState<string[]>(lead?.product_names || []);
+  const [productPickerOpen, setProductPickerOpen] = useState(false);
   const [products, setProducts] = useState<any[]>([]);
   const [linkedOrder, setLinkedOrder] = useState<any>(null);
   const [orderItems, setOrderItems] = useState<{ product_name: string; quantity: number; price: number }[]>([]);
@@ -62,7 +65,7 @@ const LeadDetailsDialog = ({ lead, open, onOpenChange, onUpdate, sellers, stages
       setPrice(lead.price?.toString() || "");
       setNotes(lead.notes || "");
       setDeliveryStatus(lead.delivery_status || "");
-      setSelectedProduct(lead.product_name || "");
+      setSelectedProducts(lead.product_names || []);
       fetchProducts();
 
       // A lead auto-creates its order the moment it enters "Sotildi" (see
@@ -233,15 +236,20 @@ const LeadDetailsDialog = ({ lead, open, onOpenChange, onUpdate, sellers, stages
     }
   };
 
-  const handleUpdateProduct = async (productName: string) => {
+  const toggleProduct = (productName: string) => {
+    setSelectedProducts((prev) =>
+      prev.includes(productName) ? prev.filter((p) => p !== productName) : [...prev, productName],
+    );
+  };
+
+  const handleSaveLeadProducts = async () => {
     try {
-      await api.leads.update(lead.id, { product_name: productName || null });
-      setSelectedProduct(productName);
-      toast.success("Mahsulot saqlandi");
+      await api.leads.update(lead.id, { product_names: selectedProducts.length ? selectedProducts : null });
+      toast.success("Mahsulotlar saqlandi");
       onUpdate();
     } catch (error) {
-      console.error("Error updating product:", error);
-      toast.error("Mahsulotni saqlashda xato");
+      console.error("Error updating products:", error);
+      toast.error("Mahsulotlarni saqlashda xato");
     }
   };
 
@@ -387,24 +395,72 @@ const LeadDetailsDialog = ({ lead, open, onOpenChange, onUpdate, sellers, stages
             )}
           </div>
 
-          {/* Product Selection - which product the seller is offering/selling, independent of stage */}
+          {/* Product Selection - which product(s) the seller is offering/selling, independent of stage */}
           <div>
             <Label className="flex items-center gap-2">
               <Package className="h-4 w-4" />
               Mahsulot
             </Label>
-            <Select value={selectedProduct || undefined} onValueChange={handleUpdateProduct}>
-              <SelectTrigger className="mt-1">
-                <SelectValue placeholder="Mahsulotni tanlang" />
-              </SelectTrigger>
-              <SelectContent>
-                {products.map((product) => (
-                  <SelectItem key={product.id} value={product.name}>
-                    {product.name}
-                  </SelectItem>
+            <Popover open={productPickerOpen} onOpenChange={setProductPickerOpen}>
+              <PopoverTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  role="combobox"
+                  aria-expanded={productPickerOpen}
+                  className="mt-1 w-full justify-between font-normal"
+                >
+                  <span className="truncate text-left">
+                    {selectedProducts.length > 0 ? selectedProducts.join(", ") : "Mahsulotlarni tanlang"}
+                  </span>
+                  <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-[--radix-popover-trigger-width] p-0">
+                <Command>
+                  <CommandInput placeholder="Mahsulot qidirish..." />
+                  <CommandList>
+                    <CommandEmpty>Mahsulot topilmadi</CommandEmpty>
+                    <CommandGroup>
+                      {products.map((product) => (
+                        <CommandItem
+                          key={product.id}
+                          value={product.name}
+                          onSelect={() => toggleProduct(product.name)}
+                          className="cursor-pointer gap-2"
+                        >
+                          <Checkbox checked={selectedProducts.includes(product.name)} className="pointer-events-none" />
+                          {product.name}
+                        </CommandItem>
+                      ))}
+                    </CommandGroup>
+                  </CommandList>
+                </Command>
+              </PopoverContent>
+            </Popover>
+
+            {selectedProducts.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {selectedProducts.map((name) => (
+                  <Badge key={name} variant="secondary" className="gap-1 pr-1">
+                    {name}
+                    <button
+                      type="button"
+                      onClick={() => toggleProduct(name)}
+                      className="rounded-full hover:bg-muted-foreground/20"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </Badge>
                 ))}
-              </SelectContent>
-            </Select>
+              </div>
+            )}
+
+            {JSON.stringify([...selectedProducts].sort()) !== JSON.stringify([...(lead?.product_names || [])].sort()) && (
+              <Button onClick={handleSaveLeadProducts} size="sm" className="mt-2">
+                Saqlash
+              </Button>
+            )}
           </div>
 
           {/* Lead Information */}

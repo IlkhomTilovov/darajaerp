@@ -52,7 +52,7 @@ const leadSchema = z.object({
   employee: z.string().nullable().optional(),
   leadType: z.string().nullable().optional(),
   leadQuality: z.string().nullable().optional(),
-  productName: z.string().nullable().optional(),
+  productNames: z.array(z.string()).nullable().optional(),
   price: z.number().nullable().optional(),
   deliveryStatus: z.string().nullable().optional(),
 });

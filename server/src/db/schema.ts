@@ -139,7 +139,7 @@ export const leads = pgTable("leads", {
   employee: text("employee"),
   leadType: text("lead_type"),
   leadQuality: text("lead_quality"),
-  productName: text("product_name"),
+  productNames: text("product_names").array(),
   price: numeric("price"),
   deliveryStatus: text("delivery_status"),
   actionStatus: text("action_status"),
