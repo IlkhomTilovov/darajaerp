@@ -573,30 +573,30 @@ const LeadDetailsDialog = ({ lead, open, onOpenChange, onUpdate, sellers, stages
               <div className="grid grid-cols-4 gap-2">
                 <a
                   href={lead.customer_phone ? `tel:${lead.customer_phone}` : undefined}
-                  className={`flex flex-col items-center gap-1 rounded-lg border bg-background p-2.5 text-xs hover:bg-accent/50 ${!lead.customer_phone ? "pointer-events-none opacity-40" : ""}`}
+                  className={`flex flex-col items-center gap-1 rounded-lg border bg-background p-2 text-[10px] leading-tight hover:bg-accent/50 ${!lead.customer_phone ? "pointer-events-none opacity-40" : ""}`}
                 >
-                  <Phone className="h-4 w-4" />
+                  <Phone className="h-3.5 w-3.5" />
                   Qo'ng'iroq
                 </a>
                 <a
                   href={lead.customer_phone ? `sms:${lead.customer_phone}` : undefined}
-                  className={`flex flex-col items-center gap-1 rounded-lg border bg-background p-2.5 text-xs hover:bg-accent/50 ${!lead.customer_phone ? "pointer-events-none opacity-40" : ""}`}
+                  className={`flex flex-col items-center gap-1 rounded-lg border bg-background p-2 text-[10px] leading-tight hover:bg-accent/50 ${!lead.customer_phone ? "pointer-events-none opacity-40" : ""}`}
                 >
-                  <MessageSquare className="h-4 w-4" />
+                  <MessageSquare className="h-3.5 w-3.5" />
                   Xabar
                 </a>
                 <button
                   type="button"
                   onClick={openScheduleTask}
-                  className="flex flex-col items-center gap-1 rounded-lg border bg-background p-2.5 text-xs hover:bg-accent/50"
+                  className="flex flex-col items-center gap-1 rounded-lg border bg-background p-2 text-[10px] leading-tight hover:bg-accent/50"
                 >
-                  <CalendarIcon className="h-4 w-4" />
+                  <CalendarIcon className="h-3.5 w-3.5" />
                   Uchrashuv
                 </button>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <button type="button" className="flex flex-col items-center gap-1 rounded-lg border bg-background p-2.5 text-xs hover:bg-accent/50">
-                      <MoreHorizontal className="h-4 w-4" />
+                    <button type="button" className="flex flex-col items-center gap-1 rounded-lg border bg-background p-2 text-[10px] leading-tight hover:bg-accent/50">
+                      <MoreHorizontal className="h-3.5 w-3.5" />
                       Boshqa
                     </button>
                   </DropdownMenuTrigger>
