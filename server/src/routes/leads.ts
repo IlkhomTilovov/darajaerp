@@ -42,18 +42,18 @@ router.get(
 const leadSchema = z.object({
   sellerId: z.string().uuid(),
   customerName: z.string().min(1),
-  customerPhone: z.string().optional(),
-  customerEmail: z.string().optional(),
-  source: z.string().optional(),
+  customerPhone: z.string().nullable().optional(),
+  customerEmail: z.string().nullable().optional(),
+  source: z.string().nullable().optional(),
   status: z.string().optional(),
-  stage: z.string().optional(),
-  notes: z.string().optional(),
-  activity: z.string().optional(),
-  employee: z.string().optional(),
-  leadType: z.string().optional(),
-  leadQuality: z.string().optional(),
-  price: z.number().optional(),
-  deliveryStatus: z.string().optional(),
+  stage: z.string().nullable().optional(),
+  notes: z.string().nullable().optional(),
+  activity: z.string().nullable().optional(),
+  employee: z.string().nullable().optional(),
+  leadType: z.string().nullable().optional(),
+  leadQuality: z.string().nullable().optional(),
+  price: z.number().nullable().optional(),
+  deliveryStatus: z.string().nullable().optional(),
 });
 
 router.post(
@@ -67,7 +67,7 @@ router.post(
     const { price, ...rest } = parsed.data;
     const [row] = await db
       .insert(schema.leads)
-      .values({ ...rest, price: price !== undefined ? String(price) : undefined, companyId: user.companyId })
+      .values({ ...rest, price: price != null ? String(price) : undefined, companyId: user.companyId })
       .returning();
     res.status(201).json(row);
   }),
@@ -89,7 +89,7 @@ router.patch(
     const { price, ...rest } = parsed.data;
     const [row] = await db
       .update(schema.leads)
-      .set({ ...rest, ...(price !== undefined ? { price: String(price) } : {}), updatedAt: new Date() })
+      .set({ ...rest, ...(price !== undefined ? { price: price != null ? String(price) : null } : {}), updatedAt: new Date() })
       .where(eq(schema.leads.id, req.params.id))
       .returning();
 
