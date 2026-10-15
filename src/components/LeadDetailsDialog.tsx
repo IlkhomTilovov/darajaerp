@@ -39,6 +39,7 @@ const LeadDetailsDialog = ({ lead, open, onOpenChange, onUpdate, sellers, stages
   const [price, setPrice] = useState(lead?.price?.toString() || "");
   const [notes, setNotes] = useState(lead?.notes || "");
   const [deliveryStatus, setDeliveryStatus] = useState(lead?.delivery_status || "");
+  const [selectedProduct, setSelectedProduct] = useState(lead?.product_name || "");
   const [products, setProducts] = useState<any[]>([]);
   const [linkedOrder, setLinkedOrder] = useState<any>(null);
   const [orderItems, setOrderItems] = useState<{ product_name: string; quantity: number; price: number }[]>([]);
@@ -61,6 +62,8 @@ const LeadDetailsDialog = ({ lead, open, onOpenChange, onUpdate, sellers, stages
       setPrice(lead.price?.toString() || "");
       setNotes(lead.notes || "");
       setDeliveryStatus(lead.delivery_status || "");
+      setSelectedProduct(lead.product_name || "");
+      fetchProducts();
 
       // A lead auto-creates its order the moment it enters "Sotildi" (see
       // server/src/routes/leads.ts), so by the time this dialog can show the
@@ -74,10 +77,18 @@ const LeadDetailsDialog = ({ lead, open, onOpenChange, onUpdate, sellers, stages
     }
   }, [open, lead]);
 
+  const fetchProducts = async () => {
+    try {
+      const productsData = await api.products.list();
+      setProducts(productsData);
+    } catch (error) {
+      console.error("Error fetching products:", error);
+    }
+  };
+
   const fetchOrderData = async () => {
     try {
-      const [productsData, ordersData] = await Promise.all([api.products.list(), api.orders.list()]);
-      setProducts(productsData);
+      const ordersData = await api.orders.list();
       const order = ordersData.find((o: any) => o.lead_id === lead.id) || null;
       setLinkedOrder(order);
       setOrderItems(
@@ -222,6 +233,18 @@ const LeadDetailsDialog = ({ lead, open, onOpenChange, onUpdate, sellers, stages
     }
   };
 
+  const handleUpdateProduct = async (productName: string) => {
+    try {
+      await api.leads.update(lead.id, { product_name: productName || null });
+      setSelectedProduct(productName);
+      toast.success("Mahsulot saqlandi");
+      onUpdate();
+    } catch (error) {
+      console.error("Error updating product:", error);
+      toast.error("Mahsulotni saqlashda xato");
+    }
+  };
+
   const handleUpdateNotes = async () => {
     try {
       await api.leads.update(lead.id, { notes });
@@ -362,6 +385,26 @@ const LeadDetailsDialog = ({ lead, open, onOpenChange, onUpdate, sellers, stages
             {isSoldStage && !price && (
               <p className="text-sm text-destructive mt-1">Sotildi bosqichida narx kiritish majburiy</p>
             )}
+          </div>
+
+          {/* Product Selection - which product the seller is offering/selling, independent of stage */}
+          <div>
+            <Label className="flex items-center gap-2">
+              <Package className="h-4 w-4" />
+              Mahsulot
+            </Label>
+            <Select value={selectedProduct || undefined} onValueChange={handleUpdateProduct}>
+              <SelectTrigger className="mt-1">
+                <SelectValue placeholder="Mahsulotni tanlang" />
+              </SelectTrigger>
+              <SelectContent>
+                {products.map((product) => (
+                  <SelectItem key={product.id} value={product.name}>
+                    {product.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           {/* Lead Information */}
