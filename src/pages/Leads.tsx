@@ -26,6 +26,7 @@ import LeadCard from "@/components/LeadCard";
 import LeadDetailsDialog from "@/components/LeadDetailsDialog";
 import StageManagement from "@/components/StageManagement";
 import SortableStageColumn from "@/components/SortableStageColumn";
+import AddStageColumn from "@/components/AddStageColumn";
 import { StageChangeDialog } from "@/components/StageChangeDialog";
 import { LEAD_SOURCE_OPTIONS } from "@/lib/leadDisplay";
 import {
@@ -973,6 +974,12 @@ const Leads = () => {
                   onStageDeleted={fetchStages}
                 />
               ))}
+              {isAdminOrRop && (
+                <AddStageColumn
+                  nextDisplayOrder={stages.length + 1}
+                  onAdded={fetchStages}
+                />
+              )}
             </div>
           </SortableContext>
         </DndContext>
