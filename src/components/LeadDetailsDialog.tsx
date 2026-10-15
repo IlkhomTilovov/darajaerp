@@ -620,7 +620,7 @@ const LeadDetailsDialog = ({ lead, open, onOpenChange, onUpdate, sellers, stages
           {/* Main panel */}
           <div className="flex min-w-0 flex-1 flex-col">
             <Tabs value={activeTab} onValueChange={setActiveTab} className="flex min-h-0 flex-1 flex-col">
-              <div className="flex items-center justify-between border-b px-6 pt-4">
+              <div className="flex items-center justify-between border-b py-4 pl-6 pr-16">
                 <TabsList className="h-auto gap-6 rounded-none bg-transparent p-0">
                   <TabsTrigger
                     value="info"
@@ -646,7 +646,7 @@ const LeadDetailsDialog = ({ lead, open, onOpenChange, onUpdate, sellers, stages
                 </TabsList>
 
                 {isAdminOrRop && (
-                  <Button variant="destructive" size="sm" onClick={handleDeleteLead} className="mb-3">
+                  <Button variant="destructive" size="sm" onClick={handleDeleteLead}>
                     <Trash2 className="mr-2 h-4 w-4" />
                     O'chirish
                   </Button>
